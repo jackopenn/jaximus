@@ -3,6 +3,7 @@ from typing import Callable
 
 import jax
 from flax import nnx
+import optax
 
 from utils import ModelConfig, DataConfig, OptimConfig, TrainConfig, ExpConfig
 
@@ -53,6 +54,7 @@ model_config = GPTConfig(
     act_fn=nnx.gelu,
     max_seq_len=1024,
     layer_norm_epsilon=1e-5,
+    use_bias=True,
 )
 
 data_config = DataConfig(
@@ -60,22 +62,29 @@ data_config = DataConfig(
     hf_name=["allenai/c4", "realnewslike"],
     tokenizer_name="gpt2",
     max_length=1024,
-    batch_size=2,
+    batch_size=8,
 )
 
 optim_config = OptimConfig(
     name="adamw",
-    lr=5e-4,
-    weight_decay=0.0,
+    lr=6e-4,
+    weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    accum_steps=2,
+    accum_steps=64,
+    scheduler=optax.warmup_cosine_decay_schedule(
+        init_value=0.0,
+        peak_value=6e-4,
+        warmup_steps=1_000,
+        decay_steps=600_000,
+        end_value=6e-5
+    )
 )
 
 train_config = TrainConfig(
     num_steps=1000,
-    log_every=2,
-    eval_every=10,
+    log_every=100,
+    eval_every=100,
     save_every=100,
     save_dir="checkpoints",
 )
