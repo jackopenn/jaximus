@@ -104,13 +104,13 @@ def train(config: ExpConfig):
             log_stats["toks_s"] = (config.optim.batch_size * config.data.max_length) / step_time
             log_stats["lr"] = config.optim.lr if isinstance(config.optim.lr, float) else config.optim.lr(step)
             pretty_print(step, log_stats)
-            wandb.log(log_stats)
+            wandb.log(log_stats, step=step)
             metrics.reset()
 
             if step % config.train.generate_every == 0:
                 sample = generate(model, tokenizer, "What is the meaning of life?", 16)
                 print(f"step: {step}, sample: {sample}")
-                wandb.log({"sample": sample})
+                wandb.log({"sample": sample}, step=step)
             
 
             if step > 0 and step % config.train.save_every == 0:
