@@ -10,7 +10,7 @@ dependencies = [
     "flax>=0.11.0",
     "grain>=0.2.11",
     "ipykernel>=6.30.1",
-    "jax",
+    "jax[cuda12]",
     "numpy>=2.3.2",
     "optax>=0.2.5",
     "orbax-checkpoint>=0.11.21",

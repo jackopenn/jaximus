@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Callable
 from ds.hf import get_hf_dataset
 from modelling.models.gpt import GPT, GPTConfig
 
@@ -51,6 +52,7 @@ class OptimConfig:
     betas: tuple[float, float]
     grad_clip: float
     accum_steps: int
+    scheduler: Callable | None
 
 def get_optimizer(model, config: OptimConfig):
     if config.name == "adamw":
@@ -58,7 +60,7 @@ def get_optimizer(model, config: OptimConfig):
             optax.chain(
                 optax.clip_by_global_norm(config.grad_clip),
                 optax.adamw(
-                    learning_rate=config.lr,
+                    learning_rate=config.scheduler if config.scheduler else config.lr,
                     weight_decay=config.weight_decay,
                     b1=config.betas[0],
                     b2=config.betas[1],

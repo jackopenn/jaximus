@@ -15,7 +15,7 @@ import wandb
 def pretty_print(step, metrics):
     print(f"step: {step}", end=", ")
     for k, v in metrics.items():
-        print(f"{k}: {v:.4f}", end=", ")
+        print(f"{k}: {v:.5f}", end=", ")
     print()
 
 
@@ -87,6 +87,7 @@ def train(config: ExpConfig):
         if step % config.train.log_every == 0:
             metrics_computed = metrics.compute()
             metrics_computed["tok/s"] = (config.data.batch_size * config.data.max_length) / metrics_computed["step_time"]
+            metrics_computed["lr"] = config.optim.scheduler(step) if config.optim.scheduler else config.optim.lr
             pretty_print(step, metrics_computed)
             wandb.log(metrics_computed)
             metrics.reset()

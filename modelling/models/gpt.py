@@ -57,23 +57,43 @@ class GPT(nnx.Module):
     def __init__(self, config: GPTConfig, rngs: nnx.Rngs):
         super().__init__()
         self.config = config
-        self.embed_tokens = nnx.Embed(
+        self.token_embed = nnx.Embed(
             num_embeddings=config.vocab_size,
             features=config.hidden_dim,
             rngs=rngs,
         )
-        self.layers = [GPTLayer(config.hidden_dim, config.num_heads, config.intermediate_dim, config.act_fn, config.layer_norm_epsilon, config.use_bias, rngs) for _ in range(config.num_layers)]
-        self.ln_f = nnx.LayerNorm(num_features=config.hidden_dim, epsilon=config.layer_norm_epsilon, rngs=rngs)
-        self.lm_head = nnx.Linear(config.hidden_dim, config.vocab_size, use_bias=config.use_bias, rngs=rngs)
+        self.pos_embed = nnx.Embed(
+            num_embeddings=config.max_seq_len,
+            features=config.hidden_dim,
+            rngs=rngs,
+        )
+        self.layers = [
+            GPTLayer(
+                hidden_dim=config.hidden_dim,
+                num_heads=config.num_heads,
+                intermediate_dim=config.intermediate_dim,
+                act_fn=config.act_fn,
+                layer_norm_epsilon=config.layer_norm_epsilon,
+                use_bias=config.use_bias,
+                rngs=rngs
+            )
+            for _ in range(config.num_layers)
+        ]
+        self.ln_f = nnx.LayerNorm(
+            num_features=config.hidden_dim,
+            epsilon=config.layer_norm_epsilon,
+            rngs=rngs,
+        )
 
     def __call__(self, input_ids: jnp.ndarray, attention_mask: jnp.ndarray | None = None) -> jnp.ndarray:
         if attention_mask is None:
             attention_mask = nnx.make_causal_mask(input_ids)
         # print(input_ids.shape, attention_mask.shape)
-        x = self.embed_tokens(input_ids)
+        x = self.token_embed(input_ids)
+        x = x + self.pos_embed(jnp.arange(input_ids.shape[1]))
         # print(x.shape)
         for layer in self.layers:
             x = layer(x, attention_mask)
         x = self.ln_f(x)
-        return self.lm_head(x)
+        return self.token_embed.attend(x)
     
