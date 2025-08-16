@@ -1,6 +1,7 @@
 # jaximus
+## setup
+`curl -LsSf https://astral.sh/uv/install.sh | sh`
 ## TODO:
-- [] move batch size to train config (out of data config)
 - [] add checkpointing
 - [] add restart from checkpoint
 - [] add DP
