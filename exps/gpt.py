@@ -40,15 +40,15 @@ optim_config = OptimConfig(
         init_value=0.0,
         peak_value=6e-4,
         warmup_steps=1_000,
-        decay_steps=600_000,
+        decay_steps=1_000_000,
         end_value=6e-5
     )
 )
 
 train_config = TrainConfig(
-    num_steps=1000,
-    log_every=100,
-    eval_every=100,
+    num_steps=10_000,
+    log_every=1,
+    eval_every=5,
     save_every=100,
     save_dir="checkpoints",
 )

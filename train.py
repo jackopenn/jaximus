@@ -34,6 +34,8 @@ def train(config: ExpConfig):
     model = get_model(config.model, config.seed)
     optimizer = get_optimizer(model,config.optim)
 
+    dataset = dataset.batch(config.optim.batch_size)
+
     def loss_fn(model, batch):
         x, y = batch
         logits = model(x)
@@ -49,7 +51,6 @@ def train(config: ExpConfig):
         optimizer.update(model, grads)
         return loss
 
-    dataset = dataset.batch(config.data.batch_size)
 
     num_params = sum(x.size for x in jax.tree_util.tree_leaves(nnx.state(model, nnx.Param)))
     print(f"Number of trainable parameters: {num_params:,}")
@@ -88,15 +89,15 @@ def train(config: ExpConfig):
     
         metrics.update(loss=loss, step_time=(t1 - t0))
         
-        if step % config.train.log_every == 0:
+        if step % config.train.log_every == 0 and accum_steps == 0:
             log_stats = metrics.compute()
-            log_stats["toks_s"] = (config.data.batch_size * config.data.max_length) / log_stats["step_time"]
-            log_stats["lr"] = config.optim.scheduler(step) if config.optim.scheduler else config.optim.lr
+            log_stats["toks_s"] = (config.optim.batch_size * config.data.max_length) / log_stats["step_time"]
+            log_stats["lr"] = config.optim.lr if isinstance(config.optim.lr, float) else config.optim.lr(step)
             pretty_print(step, log_stats)
             wandb.log(log_stats)
             metrics.reset()
 
-        if step % config.train.eval_every == 0:
+        if step % config.train.eval_every == 0 and accum_steps == 0:
             sample = generate(model, tokenizer, "My favourite food is ", 16)
             print(f"step: {step}, sample: {sample}")
             wandb.log({"sample": sample})

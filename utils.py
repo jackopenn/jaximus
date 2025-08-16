@@ -13,7 +13,6 @@ class DataConfig:
     hf_name: str
     tokenizer_name: str
     max_length: int
-    batch_size: int
 
 
 def get_dataset(config: DataConfig):
