@@ -69,14 +69,18 @@ def train(config: ExpConfig):
         step_time=nnx.metrics.Average("step_time"),
     )
 
-
-
     wandb.init(
         project="transformers",
         config=config,
     )
 
-    for step, batch in enumerate(dataset):
+    train_iter = iter(dataset)
+
+    step = 0
+    accum_steps = 0
+    while step < config.train.num_steps:
+        batch = next(train_iter)
+
         # train step
         t0 = time.time()
         loss = train_step(model, optimizer, batch)
@@ -85,11 +89,11 @@ def train(config: ExpConfig):
         metrics.update(loss=loss, step_time=(t1 - t0))
         
         if step % config.train.log_every == 0:
-            metrics_computed = metrics.compute()
-            metrics_computed["tok/s"] = (config.data.batch_size * config.data.max_length) / metrics_computed["step_time"]
-            metrics_computed["lr"] = config.optim.scheduler(step) if config.optim.scheduler else config.optim.lr
-            pretty_print(step, metrics_computed)
-            wandb.log(metrics_computed)
+            log_stats = metrics.compute()
+            log_stats["toks_s"] = (config.data.batch_size * config.data.max_length) / log_stats["step_time"]
+            log_stats["lr"] = config.optim.scheduler(step) if config.optim.scheduler else config.optim.lr
+            pretty_print(step, log_stats)
+            wandb.log(log_stats)
             metrics.reset()
 
         if step % config.train.eval_every == 0:
@@ -99,3 +103,8 @@ def train(config: ExpConfig):
 
         # if step % config.train.save_every == 0:
         #     nnx.save(model, f"checkpoints/model_{step}.flax")
+
+        accum_steps += 1
+        if accum_steps == config.optim.accum_steps:
+            accum_steps = 0
+            step += 1
