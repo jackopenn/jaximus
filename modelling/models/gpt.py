@@ -19,7 +19,8 @@ class GPTConfig:
     act_fn: Callable
     max_seq_len: int
     layer_norm_epsilon: float
-    use_bias: bool = False
+    use_bias: bool
+    dtype: jnp.dtype
 
 
 class GPTLayer(nnx.Module):
@@ -31,6 +32,7 @@ class GPTLayer(nnx.Module):
             act_fn: Callable,
             layer_norm_epsilon: float,
             use_bias: bool,
+            dtype: jnp.dtype,
             rngs: nnx.Rngs,
     ):
         super().__init__()
@@ -39,11 +41,12 @@ class GPTLayer(nnx.Module):
             in_features=hidden_dim,
             decode=False,
             use_bias=use_bias,
+            dtype=dtype,
             rngs=rngs,
         )
-        self.ln_1 = nnx.LayerNorm(num_features=hidden_dim, epsilon=layer_norm_epsilon, rngs=rngs)
-        self.mlp = MLP(hidden_dim, intermediate_dim, act_fn, use_bias, rngs=rngs)
-        self.ln_2 = nnx.LayerNorm(num_features=hidden_dim, epsilon=layer_norm_epsilon, rngs=rngs)
+        self.ln_1 = nnx.LayerNorm(num_features=hidden_dim, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
+        self.mlp = MLP(hidden_dim, intermediate_dim, act_fn, use_bias, dtype=dtype, rngs=rngs)
+        self.ln_2 = nnx.LayerNorm(num_features=hidden_dim, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, attention_mask: jnp.ndarray) -> jnp.ndarray:
         x = x + self.attention(x, mask=attention_mask)
@@ -60,11 +63,13 @@ class GPT(nnx.Module):
         self.token_embed = nnx.Embed(
             num_embeddings=config.vocab_size,
             features=config.hidden_dim,
+            dtype=config.dtype,
             rngs=rngs,
         )
         self.pos_embed = nnx.Embed(
             num_embeddings=config.max_seq_len,
             features=config.hidden_dim,
+            dtype=config.dtype,
             rngs=rngs,
         )
         self.layers = [
@@ -75,6 +80,7 @@ class GPT(nnx.Module):
                 act_fn=config.act_fn,
                 layer_norm_epsilon=config.layer_norm_epsilon,
                 use_bias=config.use_bias,
+                dtype=config.dtype,
                 rngs=rngs
             )
             for _ in range(config.num_layers)
@@ -82,6 +88,7 @@ class GPT(nnx.Module):
         self.ln_f = nnx.LayerNorm(
             num_features=config.hidden_dim,
             epsilon=config.layer_norm_epsilon,
+            dtype=jnp.float32,
             rngs=rngs,
         )
 

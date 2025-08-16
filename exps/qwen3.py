@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import jax
+from jax import numpy as jnp
 from flax import nnx
 import optax
 
@@ -17,10 +18,11 @@ model_config = Qwen3Config(
     intermediate_dim=2048,
     num_layers=12,
     num_attention_heads=12,
-    num_key_value_heads=12,
+    num_key_value_heads=6,
     head_dim=64,
     act_fn=nnx.silu,
     max_seq_len=1024,
+    dtype=jnp.bfloat16,
 )
 
 data_config = DataConfig(
@@ -36,22 +38,23 @@ optim_config = OptimConfig(
     weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=1,
-    accum_steps=1,
+    batch_size=16,
+    accum_steps=32,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,
         warmup_steps=1_000,
-        decay_steps=1_000_000,
+        decay_steps=99_000,
         end_value=6e-5
     )
 )
 
 train_config = TrainConfig(
-    num_steps=10_000,
-    log_every=1,
-    eval_every=5,
-    save_every=100,
+    num_steps=100_000,
+    log_every=10,
+    generate_every=100,
+    eval_every=-1,
+    save_every=1_000,
     save_dir="checkpoints",
 )
 

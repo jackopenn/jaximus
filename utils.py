@@ -80,6 +80,7 @@ def get_optimizer(model, config: OptimConfig):
 class TrainConfig:
     num_steps: int
     log_every: int
+    generate_every: int
     eval_every: int
     save_every: int
     save_dir: str

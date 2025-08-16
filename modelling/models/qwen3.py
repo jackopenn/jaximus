@@ -19,6 +19,7 @@ class Qwen3Config:
     intermediate_dim: int
     act_fn: Callable
     max_seq_len: int
+    dtype: jnp.dtype
 
 
 class Qwen3Layer(nnx.Module):
@@ -30,6 +31,7 @@ class Qwen3Layer(nnx.Module):
             head_dim: int,
             intermediate_dim: int,
             act_fn: Callable,
+            dtype: jnp.dtype,
             rngs: nnx.Rngs,
     ):
         super().__init__()
@@ -39,11 +41,12 @@ class Qwen3Layer(nnx.Module):
             num_key_value_heads=num_key_value_heads,
             head_dim=head_dim,
             rngs=rngs,
+            dtype=dtype,
             qk_norm=True
         )
-        self.norm_1 = nnx.RMSNorm(hidden_dim, rngs=rngs)
-        self.mlp = GLU(hidden_dim, intermediate_dim, act_fn, use_bias=False, rngs=rngs)
-        self.norm_2 = nnx.RMSNorm(hidden_dim, rngs=rngs)
+        self.norm_1 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, rngs=rngs)
+        self.mlp = GLU(hidden_dim, intermediate_dim, act_fn, use_bias=False, dtype=dtype, rngs=rngs)
+        self.norm_2 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, attention_mask: jnp.ndarray) -> jnp.ndarray:
         x = x + self.attention(self.norm_1(x), mask=attention_mask)
@@ -58,11 +61,13 @@ class Qwen3(nnx.Module):
         self.token_embed = nnx.Embed(
             num_embeddings=config.vocab_size,
             features=config.hidden_dim,
+            dtype=config.dtype,
             rngs=rngs,
         )
         self.pos_embed = nnx.Embed(
             num_embeddings=config.max_seq_len,
             features=config.hidden_dim,
+            dtype=config.dtype,
             rngs=rngs,
         )
         self.layers = [
@@ -73,11 +78,12 @@ class Qwen3(nnx.Module):
                 head_dim=config.head_dim,
                 intermediate_dim=config.intermediate_dim,
                 act_fn=config.act_fn,
+                dtype=config.dtype,
                 rngs=rngs
             )
             for _ in range(config.num_layers)
         ]
-        self.lm_norm = nnx.RMSNorm(config.hidden_dim, rngs=rngs)
+        self.lm_norm = nnx.RMSNorm(config.hidden_dim, dtype=jnp.float32, rngs=rngs)
 
     def __call__(self, input_ids: jnp.ndarray, attention_mask: jnp.ndarray | None = None) -> jnp.ndarray:
         if attention_mask is None:

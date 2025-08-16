@@ -10,7 +10,7 @@ import optax
 
 import wandb
 
-# import orbax.checkpoint as ocp
+import orbax.checkpoint as ocp
 
 def pretty_print(step, metrics):
     print(f"step: {step}", end=", ")
@@ -29,6 +29,10 @@ def generate(model, tokenizer, prompt, max_length):
     return tokenizer.decode(x[0])
 
 def train(config: ExpConfig):
+
+    assert config.train.generate_every % config.train.log_every == 0, "generate_every must be a multiple of log_every for accurate timing :)"
+    # assert config.train.eval_every % config.train.log_every == 0, "eval_every must be a multiple of log_every"
+    assert config.train.save_every % config.train.log_every == 0, "save_every must be a multiple of log_every"
 
     tokenizer, dataset = get_dataset(config.data)
     model = get_model(config.model, config.seed)
@@ -55,19 +59,18 @@ def train(config: ExpConfig):
     num_params = sum(x.size for x in jax.tree_util.tree_leaves(nnx.state(model, nnx.Param)))
     print(f"Number of trainable parameters: {num_params:,}")
 
-    # ckpt_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/checkpoints/')
-    # ckpt_options = ocp.CheckpointManagerOptions(
-    #     max_to_keep=1,
-    #     best_fn = lambda x: x,
-    #     best_mode="min",
-    #     cleanup_tmp_directories=True,
-    #     enable_async_checkpointing=False
-    # )
-    # ckpt_mngr = ocp.CheckpointManager(ckpt_dir, options=ckpt_options)
+    ckpt_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/checkpoints/')
+    ckpt_options = ocp.CheckpointManagerOptions(
+        max_to_keep=5,
+        best_fn = lambda x: x,
+        best_mode="min",
+        cleanup_tmp_directories=True,
+        enable_async_checkpointing=False # otherwise wandb logging fails
+    )
+    ckpt_mngr = ocp.CheckpointManager(ckpt_dir, options=ckpt_options)
 
     metrics = nnx.MultiMetric(
         loss=nnx.metrics.Average("loss"),
-        step_time=nnx.metrics.Average("step_time"),
     )
 
     wandb.init(
@@ -80,32 +83,42 @@ def train(config: ExpConfig):
     step = 0
     accum_steps = 0
 
+    # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
+    cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
+    t0 = time.time()
     while step < config.train.num_steps:
         batch = next(train_iter)
 
-        # train step
-        t0 = time.time()
-        loss = train_step(model, optimizer, batch)
-        t1 = time.time()
-    
-        metrics.update(loss=loss, step_time=(t1 - t0))
+        loss = cached_train_step(batch)
+        metrics.update(loss=loss)
         
         if step % config.train.log_every == 0 and accum_steps == 0:
+            loss.block_until_ready()
+            t1 = time.time()
+            
+            step_time = (t1 - t0) / (config.train.log_every * config.optim.accum_steps if step > 0 else 1)
+
             log_stats = metrics.compute()
-            log_stats["toks_s"] = (config.optim.batch_size * config.data.max_length) / log_stats["step_time"]
+            log_stats["step_time"] = step_time
+            log_stats["toks_s"] = (config.optim.batch_size * config.data.max_length) / step_time
             log_stats["lr"] = config.optim.lr if isinstance(config.optim.lr, float) else config.optim.lr(step)
             pretty_print(step, log_stats)
             wandb.log(log_stats)
             metrics.reset()
 
-        if step % config.train.eval_every == 0 and accum_steps == 0:
-            sample = generate(model, tokenizer, "My favourite food is ", 16)
-            print(f"step: {step}, sample: {sample}")
-            wandb.log({"sample": sample})
+            if step % config.train.generate_every == 0:
+                sample = generate(model, tokenizer, "What is the meaning of life?", 16)
+                print(f"step: {step}, sample: {sample}")
+                wandb.log({"sample": sample})
+            
 
-        # if step % config.train.save_every == 0:
-        #     nnx.save(model, f"checkpoints/model_{step}.flax")
+            if step > 0 and step % config.train.save_every == 0:
+                _, state = nnx.split(model)
+                ckpt_mngr.save(step, metrics=log_stats['loss'].item(), args=ocp.args.StandardSave(state))
+                wandb.log_artifact(ckpt_dir, name=f"run_{wandb.run.id}_model", type="model", aliases=[f"step_{step}"])
+            
+            t0 = time.time()
 
         accum_steps += 1
         if accum_steps == config.optim.accum_steps:

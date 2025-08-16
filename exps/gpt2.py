@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import jax
+from jax import numpy as jnp
 from flax import nnx
 import optax
 
@@ -20,6 +21,7 @@ model_config = GPTConfig(
     max_seq_len=1024,
     layer_norm_epsilon=1e-5,
     use_bias=False,
+    dtype=jnp.bfloat16,
 )
 
 data_config = DataConfig(
@@ -34,8 +36,8 @@ optim_config = OptimConfig(
     weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=8,
-    accum_steps=64,
+    batch_size=16,
+    accum_steps=32,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,
@@ -48,7 +50,7 @@ optim_config = OptimConfig(
 train_config = TrainConfig(
     num_steps=10_000,
     log_every=1,
-    eval_every=5,
+    eval_every=10,
     save_every=100,
     save_dir="checkpoints",
 )
