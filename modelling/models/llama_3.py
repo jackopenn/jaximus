@@ -6,11 +6,10 @@ from jax import numpy as jnp
 
 from flax import nnx
 
-from modelling.layers.core import MLP
-
+from modelling.layers.core import GLU, RMSNorm
 
 @dataclass
-class GPTConfig:
+class Llama3Config:
     vocab_size: int
     hidden_dim: int
     num_layers: int
@@ -18,19 +17,16 @@ class GPTConfig:
     intermediate_dim: int
     act_fn: Callable
     max_seq_len: int
-    layer_norm_epsilon: float
-    use_bias: bool = False
 
 
-class GPTLayer(nnx.Module):
+class Llama3Layer(nnx.Module):
     def __init__(
             self,
             hidden_dim: int,
             num_heads: int,
             intermediate_dim: int,
             act_fn: Callable,
-            layer_norm_epsilon: float,
-            use_bias: bool,
+            rms_eps: float,
             rngs: nnx.Rngs,
     ):
         super().__init__()
@@ -38,23 +34,23 @@ class GPTLayer(nnx.Module):
             num_heads=num_heads,
             in_features=hidden_dim,
             decode=False,
-            use_bias=use_bias,
+            use_bias=False,
             rngs=rngs,
         )
-        self.ln_1 = nnx.LayerNorm(num_features=hidden_dim, epsilon=layer_norm_epsilon, rngs=rngs)
-        self.mlp = MLP(hidden_dim, intermediate_dim, act_fn, use_bias, rngs=rngs)
-        self.ln_2 = nnx.LayerNorm(num_features=hidden_dim, epsilon=layer_norm_epsilon, rngs=rngs)
+        self.norm_1 = RMSNorm(hidden_dim, eps=rms_eps, rngs=rngs)
+        self.mlp = GLU(hidden_dim, intermediate_dim, act_fn, use_bias=False, rngs=rngs)
+        self.norm_2 = RMSNorm(hidden_dim, eps=rms_eps, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, attention_mask: jnp.ndarray) -> jnp.ndarray:
         x = x + self.attention(x, mask=attention_mask)
-        x = self.ln_1(x)
+        x = self.norm_1(x)
         x = x + self.mlp(x)
-        x = self.ln_2(x)
+        x = self.norm_2(x)
         return x
 
 
-class GPT(nnx.Module):
-    def __init__(self, config: GPTConfig, rngs: nnx.Rngs):
+class Llama3(nnx.Module):
+    def __init__(self, config: Llama3Config, rngs: nnx.Rngs):
         super().__init__()
         self.config = config
         self.token_embed = nnx.Embed(
@@ -68,7 +64,7 @@ class GPT(nnx.Module):
             rngs=rngs,
         )
         self.layers = [
-            GPTLayer(
+            Llama3Layer(
                 hidden_dim=config.hidden_dim,
                 num_heads=config.num_heads,
                 intermediate_dim=config.intermediate_dim,

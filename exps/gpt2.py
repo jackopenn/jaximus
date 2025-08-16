@@ -19,7 +19,7 @@ model_config = GPTConfig(
     act_fn=nnx.gelu,
     max_seq_len=1024,
     layer_norm_epsilon=1e-5,
-    use_bias=True,
+    use_bias=False,
 )
 
 data_config = DataConfig(
