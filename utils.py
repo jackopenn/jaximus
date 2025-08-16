@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Callable
 from ds.hf import get_hf_dataset
 from modelling.models.gpt import GPT, GPTConfig
+from modelling.models.qwen3 import Qwen3, Qwen3Config
 
 import optax
 import jax
@@ -40,6 +41,8 @@ class ModelConfig:
 def get_model(config: ModelConfig, seed: int):
     if isinstance(config, GPTConfig):
         return GPT(config, nnx.Rngs(jax.random.PRNGKey(seed)))
+    elif isinstance(config, Qwen3Config):
+        return Qwen3(config, nnx.Rngs(jax.random.PRNGKey(seed)))
     else:
         raise ValueError(f"Model {config.name} not found")
     

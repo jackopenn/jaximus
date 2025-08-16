@@ -30,11 +30,41 @@ class GLU(nnx.Module):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
 
-class RMSNorm(nnx.Module):
-    def __init__(self, hidden_dim: int, eps: float, rngs: jnp.ndarray):
+class GroupedQueryAttention(nnx.Module):
+    def __init__(self, hidden_dim: int, num_attention_heads: int, num_key_value_heads: int, head_dim: int, rngs: jnp.ndarray, qk_norm: bool = True):
         super().__init__()
-        self.weight = self.param('weight', jnp.ones, (hidden_dim,), rngs=rngs)
-        self.eps = eps
+        self.num_attention_heads = num_attention_heads
+        self.num_key_value_heads = num_key_value_heads
+        self.head_dim = head_dim
+        self.hidden_dim = hidden_dim
+        self.qk_norm = qk_norm
 
-    def __call__(self, x):
-        return x * jax.lax.rsqrt(jnp.mean(x**2, axis=-1, keepdims=True) + self.eps) * self.weight
+        self.q_proj = nnx.Linear(hidden_dim, num_attention_heads * head_dim, use_bias=False, rngs=rngs)
+        self.k_proj = nnx.Linear(hidden_dim, num_key_value_heads * head_dim, use_bias=False, rngs=rngs)
+        self.v_proj = nnx.Linear(hidden_dim, num_key_value_heads * head_dim, use_bias=False, rngs=rngs)
+        self.o_proj = nnx.Linear(num_attention_heads * head_dim, hidden_dim, use_bias=False, rngs=rngs)
+
+        if qk_norm:
+            self.q_norm = nnx.RMSNorm(head_dim, rngs=rngs)
+            self.k_norm = nnx.RMSNorm(head_dim, rngs=rngs)
+
+    def __call__(self, x: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
+        B, S, D = x.shape
+
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
+
+        q = q.reshape(B, S, self.num_attention_heads, self.head_dim)
+        k = k.reshape(B, S, self.num_key_value_heads, self.head_dim)
+        v = v.reshape(B, S, self.num_key_value_heads, self.head_dim)
+
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+
+        # this does GQA
+        mask = (mask == 1.0)
+        att = jax.nn.dot_product_attention(query=q, key=k, value=v, mask=mask)
+
+        return self.o_proj(att.reshape(B, S, -1))

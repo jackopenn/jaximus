@@ -79,6 +79,8 @@ def train(config: ExpConfig):
 
     step = 0
     accum_steps = 0
+
+
     while step < config.train.num_steps:
         batch = next(train_iter)
 
