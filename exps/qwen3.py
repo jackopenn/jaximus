@@ -25,6 +25,7 @@ model_config = Qwen3Config(
     head_dim=64,
     act_fn=nnx.silu,
     max_seq_len=1024,
+    rope_theta=1000000,
     dtype=jnp.bfloat16,
 )
 
@@ -41,7 +42,7 @@ optim_config = OptimConfig(
     weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=96,
+    batch_size=1,
     accum_steps=1,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
@@ -62,7 +63,7 @@ train_config = TrainConfig(
 )
 
 parallel_config = ParallelConfig(
-    data_parallel=4,
+    data_parallel=1,
 )
 
 exp_config = ExpConfig(

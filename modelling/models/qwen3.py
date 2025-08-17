@@ -19,6 +19,7 @@ class Qwen3Config:
     intermediate_dim: int
     act_fn: Callable
     max_seq_len: int
+    rope_theta: int
     dtype: jnp.dtype
 
 
@@ -31,6 +32,7 @@ class Qwen3Layer(nnx.Module):
             head_dim: int,
             intermediate_dim: int,
             act_fn: Callable,
+            rope_theta: int,
             dtype: jnp.dtype,
             rngs: nnx.Rngs,
     ):
@@ -40,6 +42,7 @@ class Qwen3Layer(nnx.Module):
             num_attention_heads=num_attention_heads,
             num_key_value_heads=num_key_value_heads,
             head_dim=head_dim,
+            rope_theta=rope_theta,
             rngs=rngs,
             dtype=dtype,
             qk_norm=True
@@ -64,12 +67,12 @@ class Qwen3(nnx.Module):
             dtype=config.dtype,
             rngs=rngs,
         )
-        self.pos_embed = nnx.Embed(
-            num_embeddings=config.max_seq_len,
-            features=config.hidden_dim,
-            dtype=config.dtype,
-            rngs=rngs,
-        )
+        # self.pos_embed = nnx.Embed(
+        #     num_embeddings=config.max_seq_len,
+        #     features=config.hidden_dim,
+        #     dtype=config.dtype,
+        #     rngs=rngs,
+        # )
         self.layers = [
             Qwen3Layer(
                 hidden_dim=config.hidden_dim,
@@ -78,6 +81,7 @@ class Qwen3(nnx.Module):
                 head_dim=config.head_dim,
                 intermediate_dim=config.intermediate_dim,
                 act_fn=config.act_fn,
+                rope_theta=config.rope_theta,
                 dtype=config.dtype,
                 rngs=rngs
             )
@@ -89,7 +93,7 @@ class Qwen3(nnx.Module):
         if attention_mask is None:
             attention_mask = nnx.make_causal_mask(input_ids)
         x = self.token_embed(input_ids)
-        x = x + self.pos_embed(jnp.arange(input_ids.shape[1]))
+        # x = x + self.pos_embed(jnp.arange(input_ids.shape[1]))
         for layer in self.layers:
             x = layer(x, attention_mask)
         x = self.lm_norm(x)

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable
-from ds.hf import get_hf_dataset
+from data.hf import get_hf_dataset
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
 from utils.configs import DataConfig, ModelConfig, OptimConfig

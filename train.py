@@ -28,8 +28,6 @@ def generate(model, tokenizer, prompt, max_length):
 
 def train(config: ExpConfig):
 
-    # jax.config.update('jax_num_cpu_devices', 4)
-    print(jax.devices())
 
     assert config.train.generate_every % config.train.log_every == 0, (
         f"generate_every must be a multiple of log_every for accurate timing :)"

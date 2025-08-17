@@ -3,6 +3,8 @@ from jax import numpy as jnp
 from flax import nnx
 from typing import Callable
 
+from modelling.layers.position import apply_rope
+
 
 class MLP(nnx.Module):
     def __init__(self, hidden_dim: int, intermediate_dim: int, act_fn: Callable, use_bias: bool, rngs: jnp.ndarray, dtype: jnp.dtype):
@@ -31,12 +33,13 @@ class GLU(nnx.Module):
 
 
 class GroupedQueryAttention(nnx.Module):
-    def __init__(self, hidden_dim: int, num_attention_heads: int, num_key_value_heads: int, head_dim: int, rngs: jnp.ndarray, dtype: jnp.dtype, qk_norm: bool):
+    def __init__(self, hidden_dim: int, num_attention_heads: int, num_key_value_heads: int, head_dim: int, rope_theta: int | None, rngs: jnp.ndarray, dtype: jnp.dtype, qk_norm: bool):
         super().__init__()
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
         self.head_dim = head_dim
         self.hidden_dim = hidden_dim
+        self.rope_theta = rope_theta
         self.qk_norm = qk_norm
         self.dtype = dtype
 
@@ -64,8 +67,15 @@ class GroupedQueryAttention(nnx.Module):
             q = self.q_norm(q).astype(self.dtype)
             k = self.k_norm(k).astype(self.dtype)
 
+        if self.rope_theta:
+            positions = jnp.arange(S)[None, :]
+            q = apply_rope(q, positions, base_frequency=self.rope_theta)
+            k = apply_rope(k, positions, base_frequency=self.rope_theta)
+
         # this does GQA
         mask = (mask == 1.0)
         att = jax.nn.dot_product_attention(query=q, key=k, value=v, mask=mask)
 
         return self.o_proj(att.reshape(B, S, -1))
+    
+
