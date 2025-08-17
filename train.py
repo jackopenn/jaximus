@@ -1,9 +1,12 @@
 import time
 import os
-from utils import ExpConfig, get_dataset, get_model, get_optimizer
+from utils.common import pretty_log
+from utils.getters import get_dataset, get_model, get_optimizer
+from utils.configs import ExpConfig
 
 import jax
 from jax import numpy as jnp
+from jax.sharding import Mesh, PartitionSpec, NamedSharding
 
 from flax import nnx
 import optax
@@ -11,12 +14,6 @@ import optax
 import wandb
 
 import orbax.checkpoint as ocp
-
-def pretty_print(step, metrics):
-    print(f"step: {step}", end=", ")
-    for k, v in metrics.items():
-        print(f"{k}: {v:.5f}", end=", ")
-    print()
 
 
 def generate(model, tokenizer, prompt, max_length):
@@ -28,7 +25,11 @@ def generate(model, tokenizer, prompt, max_length):
         x = jnp.concatenate([x, next_token.reshape(1, 1)], axis=1)
     return tokenizer.decode(x[0])
 
+
 def train(config: ExpConfig):
+
+    jax.config.update('jax_num_cpu_devices', 4)
+    print(jax.devices())
 
     assert config.train.generate_every % config.train.log_every == 0, "generate_every must be a multiple of log_every for accurate timing :)"
     # assert config.train.eval_every % config.train.log_every == 0, "eval_every must be a multiple of log_every"
@@ -39,6 +40,27 @@ def train(config: ExpConfig):
     optimizer = get_optimizer(model,config.optim)
 
     dataset = dataset.batch(config.optim.batch_size)
+
+    shard_batch = lambda batch: batch
+    if config.parallel.data_parallel:
+        num_devices = jax.device_count()
+
+        assert config.parallel.num_devices <= num_devices, f"num_devices must be less than or equal to the number of devices: {num_devices}"
+        mesh = jax.make_mesh((num_devices,), ("data",))
+        data_sharding = NamedSharding(mesh, PartitionSpec("data", None))
+        replicated_sharding = NamedSharding(mesh, PartitionSpec())
+
+        _, model_state = nnx.split(model)
+        sharded_model_state = jax.lax.with_sharding_constraint(model_state, replicated_sharding)
+        nnx.update(model, sharded_model_state)
+
+        _, optim_state = nnx.split(optimizer)
+        sharded_optim_state = jax.lax.with_sharding_constraint(optim_state, replicated_sharding)
+        nnx.update(optimizer, sharded_optim_state)
+        
+        shard_batch = lambda batch: jax.tree_util.tree_map(lambda x: jax.device_put(x, data_sharding), batch)
+
+
 
     def loss_fn(model, batch):
         x, y = batch
@@ -70,7 +92,7 @@ def train(config: ExpConfig):
     ckpt_mngr = ocp.CheckpointManager(ckpt_dir, options=ckpt_options)
 
     metrics = nnx.MultiMetric(
-        loss=nnx.metrics.Average("loss"),
+        loss=nnx.metrics.Average("loss")
     )
 
     wandb.init(
@@ -80,8 +102,10 @@ def train(config: ExpConfig):
 
     train_iter = iter(dataset)
 
+    tokens_per_batch = config.optim.batch_size * config.data.max_length
     step = 0
     accum_steps = 0
+    tokens_consumed = 0
 
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
@@ -89,9 +113,12 @@ def train(config: ExpConfig):
     t0 = time.time()
     while step < config.train.num_steps:
         batch = next(train_iter)
+        batch = shard_batch(batch)
 
         loss = cached_train_step(batch)
         metrics.update(loss=loss)
+
+        tokens_consumed += tokens_per_batch
         
         if step % config.train.log_every == 0 and accum_steps == 0:
             loss.block_until_ready()
@@ -101,10 +128,13 @@ def train(config: ExpConfig):
 
             log_stats = metrics.compute()
             log_stats["step_time"] = step_time
-            log_stats["toks_s"] = (config.optim.batch_size * config.data.max_length) / step_time
+            log_stats["tokens_consumed"] = tokens_consumed
+            log_stats["tokens_per_second"] = tokens_per_batch / step_time
             log_stats["lr"] = config.optim.lr if isinstance(config.optim.lr, float) else config.optim.lr(step)
-            pretty_print(step, log_stats)
+
+            pretty_log(step, log_stats)
             wandb.log(log_stats, step=step)
+            
             metrics.reset()
 
             if step % config.train.generate_every == 0:

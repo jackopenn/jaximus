@@ -6,7 +6,7 @@ from jax import numpy as jnp
 from flax import nnx
 import optax
 
-from utils import ModelConfig, DataConfig, OptimConfig, TrainConfig, ExpConfig
+from utils.configs import DataConfig, OptimConfig, TrainConfig, ExpConfig, ParallelConfig
 
 from modelling.models.qwen3 import Qwen3Config
 
@@ -38,8 +38,8 @@ optim_config = OptimConfig(
     weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=16,
-    accum_steps=32,
+    batch_size=4,
+    accum_steps=1,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,
@@ -51,11 +51,16 @@ optim_config = OptimConfig(
 
 train_config = TrainConfig(
     num_steps=100_000,
-    log_every=10,
+    log_every=1,
     generate_every=100,
     eval_every=-1,
     save_every=1_000,
     save_dir="checkpoints",
+)
+
+parallel_config = ParallelConfig(
+    num_devices=4,
+    data_parallel=True,
 )
 
 exp_config = ExpConfig(
@@ -64,6 +69,7 @@ exp_config = ExpConfig(
     model=model_config,
     data=data_config,
     optim=optim_config,
+    parallel=parallel_config,
     train=train_config,
 )
 

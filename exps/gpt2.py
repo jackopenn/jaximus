@@ -6,7 +6,7 @@ from jax import numpy as jnp
 from flax import nnx
 import optax
 
-from utils import ModelConfig, DataConfig, OptimConfig, TrainConfig, ExpConfig
+from utils.getters import ModelConfig, DataConfig, OptimConfig, TrainConfig, ExpConfig
 
 from modelling.models.gpt import GPTConfig
 

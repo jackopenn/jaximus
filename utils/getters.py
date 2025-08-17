@@ -3,18 +3,11 @@ from typing import Callable
 from ds.hf import get_hf_dataset
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
+from utils.configs import DataConfig, ModelConfig, OptimConfig
 
 import optax
 import jax
 from flax import nnx
-
-@dataclass
-class DataConfig:
-    source: str
-    hf_name: str
-    tokenizer_name: str
-    max_length: int
-
 
 def get_dataset(config: DataConfig):
     if config.source == "hf":
@@ -26,18 +19,6 @@ def get_dataset(config: DataConfig):
     else:
         raise ValueError(f"Dataset source {config.source} not found")
     
-
-@dataclass
-class ModelConfig:
-    name: str
-    vocab_size: int
-    hidden_dim: int
-    num_layers: int
-    num_heads: int
-    intermediate_dim: int
-    act_fn: str
-    max_seq_len: int
-
 def get_model(config: ModelConfig, seed: int):
     if isinstance(config, GPTConfig):
         return GPT(config, nnx.Rngs(jax.random.PRNGKey(seed)))
@@ -46,15 +27,7 @@ def get_model(config: ModelConfig, seed: int):
     else:
         raise ValueError(f"Model {config.name} not found")
     
-@dataclass
-class OptimConfig:
-    name: str
-    batch_size: int
-    lr: float | Callable
-    weight_decay: float
-    betas: tuple[float, float]
-    grad_clip: float
-    accum_steps: int
+
 
 def get_optimizer(model, config: OptimConfig):
     if config.name == "adamw":
@@ -74,24 +47,3 @@ def get_optimizer(model, config: OptimConfig):
         raise ValueError(f"Optimizer {config.name} not found")
     
     return nnx.Optimizer(model, tx, wrt=nnx.Param)
-
-
-@dataclass
-class TrainConfig:
-    num_steps: int
-    log_every: int
-    generate_every: int
-    eval_every: int
-    save_every: int
-    save_dir: str
-
-
-@dataclass
-class ExpConfig:
-    name: str
-    seed: int
-    model: ModelConfig
-    data: DataConfig
-    optim: OptimConfig
-    train: TrainConfig
-
