@@ -103,6 +103,7 @@ def train(config: ExpConfig):
     train_iter = iter(dataset)
 
     tokens_per_batch = config.optim.batch_size * config.data.max_length
+    num_devices_used = config.parallel.num_devices if config.parallel.data_parallel else 1
     step = 0
     accum_steps = 0
     tokens_consumed = 0
@@ -131,8 +132,7 @@ def train(config: ExpConfig):
             log_stats["tokens_consumed"] = tokens_consumed
             log_stats["tokens_per_second"] = tokens_per_batch / step_time
             log_stats["lr"] = config.optim.lr if isinstance(config.optim.lr, float) else config.optim.lr(step)
-            if config.parallel.data_parallel:
-                log_stats["tokens_per_second_per_device"] = tokens_per_batch / step_time / config.parallel.num_devices
+            log_stats["tokens_per_second_per_device"] = tokens_per_batch / step_time / num_devices_used
 
             pretty_log(step, log_stats)
             wandb.log(log_stats, step=step)
