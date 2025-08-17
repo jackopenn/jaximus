@@ -2,4 +2,3 @@ __pycache__/
 wandb/
 .venv/
 checkpoints/
-!.venv/lib/python3.13/site-packages/grain/_src/python/dataset/transformations/packing_concat_then_split.py
