@@ -31,9 +31,15 @@ def train(config: ExpConfig):
     # jax.config.update('jax_num_cpu_devices', 4)
     print(jax.devices())
 
-    assert config.train.generate_every % config.train.log_every == 0, "generate_every must be a multiple of log_every for accurate timing :)"
-    # assert config.train.eval_every % config.train.log_every == 0, "eval_every must be a multiple of log_every"
-    assert config.train.save_every % config.train.log_every == 0, "save_every must be a multiple of log_every"
+    assert config.train.generate_every % config.train.log_every == 0, (
+        f"generate_every must be a multiple of log_every for accurate timing :)"
+    )
+    # assert config.train.eval_every % config.train.log_every == 0, (
+    #     f"eval_every must be a multiple of log_every"
+    # )
+    assert config.train.save_every % config.train.log_every == 0, (
+        f"save_every must be a multiple of log_every"
+    )
 
     tokenizer, dataset = get_dataset(config.data)
     model = get_model(config.model, config.seed)
@@ -43,11 +49,14 @@ def train(config: ExpConfig):
 
 
     shard_batch = lambda batch: batch
-    if config.parallel.data_parallel:
+    if config.parallel.data_parallel > 1:
         num_devices = jax.device_count()
 
-        assert config.parallel.num_devices <= num_devices, f"num_devices must be less than or equal to the number of devices: {num_devices}"
-        mesh = jax.make_mesh((config.parallel.num_devices,), ("data",))
+        assert 0 < config.parallel.data_parallel <= num_devices, (
+            f"data_parallel must be less than or equal to the number of devices: {num_devices} and greater than 0"
+        )
+
+        mesh = jax.make_mesh((config.parallel.data_parallel,), ("data",))
         data_sharding = NamedSharding(mesh, PartitionSpec("data", None))
         replicated_sharding = NamedSharding(mesh, PartitionSpec())
 
@@ -98,7 +107,6 @@ def train(config: ExpConfig):
     wandb.init(
         project="transformers",
         config=config,
-        name=f"DP={config.parallel.num_devices}-BS={config.optim.batch_size}",
     )
 
     train_iter = iter(dataset)

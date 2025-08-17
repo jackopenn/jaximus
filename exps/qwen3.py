@@ -62,8 +62,7 @@ train_config = TrainConfig(
 )
 
 parallel_config = ParallelConfig(
-    num_devices=4,
-    data_parallel=True,
+    data_parallel=4,
 )
 
 exp_config = ExpConfig(

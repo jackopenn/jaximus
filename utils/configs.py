@@ -28,8 +28,7 @@ class OptimConfig:
 
 @dataclass
 class ParallelConfig:
-    num_devices: int
-    data_parallel: bool
+    data_parallel: int
 
 
 @dataclass
