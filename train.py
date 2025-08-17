@@ -28,7 +28,7 @@ def generate(model, tokenizer, prompt, max_length):
 
 def train(config: ExpConfig):
 
-    jax.config.update('jax_num_cpu_devices', 4)
+    # jax.config.update('jax_num_cpu_devices', 4)
     print(jax.devices())
 
     assert config.train.generate_every % config.train.log_every == 0, "generate_every must be a multiple of log_every for accurate timing :)"
@@ -46,7 +46,7 @@ def train(config: ExpConfig):
         num_devices = jax.device_count()
 
         assert config.parallel.num_devices <= num_devices, f"num_devices must be less than or equal to the number of devices: {num_devices}"
-        mesh = jax.make_mesh((num_devices,), ("data",))
+        mesh = jax.make_mesh((config.parallel.num_devices,), ("data",))
         data_sharding = NamedSharding(mesh, PartitionSpec("data", None))
         replicated_sharding = NamedSharding(mesh, PartitionSpec())
 
