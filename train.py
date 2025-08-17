@@ -116,7 +116,7 @@ def train(config: ExpConfig):
             if step > 0 and step % config.train.save_every == 0:
                 _, state = nnx.split(model)
                 ckpt_mngr.save(step, metrics=log_stats['loss'].item(), args=ocp.args.StandardSave(state))
-                wandb.log_artifact(ckpt_dir, name=f"run_{wandb.run.id}_model", type="model", aliases=[f"step_{step}"])
+                wandb.log_artifact(f"{ckpt_dir}/{step}", name=f"run_{wandb.run.id}_model", type="model", aliases=[f"step_{step}"])
             
             t0 = time.time()
 
