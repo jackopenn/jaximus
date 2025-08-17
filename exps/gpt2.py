@@ -42,21 +42,22 @@ optim_config = OptimConfig(
         init_value=0.0,
         peak_value=6e-4,
         warmup_steps=1_000,
-        decay_steps=1_000_000,
+        decay_steps=99_000,
         end_value=6e-5
     )
 )
 
 train_config = TrainConfig(
-    num_steps=10_000,
-    log_every=1,
-    eval_every=10,
-    save_every=100,
+    num_steps=100_000,
+    log_every=10,
+    generate_every=100,
+    eval_every=-1,
+    save_every=1_000,
     save_dir="checkpoints",
 )
 
 exp_config = ExpConfig(
-    name="gpt-test",
+    name="mini-gpt2",
     seed=42,
     model=model_config,
     data=data_config,
