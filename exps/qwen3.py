@@ -1,3 +1,6 @@
+import os
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -38,8 +41,8 @@ optim_config = OptimConfig(
     weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=32,
-    accum_steps=16,
+    batch_size=96,
+    accum_steps=1,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,
@@ -50,11 +53,11 @@ optim_config = OptimConfig(
 )
 
 train_config = TrainConfig(
-    num_steps=100_000,
+    num_steps=1000,
     log_every=10,
-    generate_every=100,
+    generate_every=10000,
     eval_every=-1,
-    save_every=1_000,
+    save_every=1_0000,
     save_dir="checkpoints",
 )
 

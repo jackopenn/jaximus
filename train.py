@@ -41,6 +41,7 @@ def train(config: ExpConfig):
 
     dataset = dataset.batch(config.optim.batch_size)
 
+
     shard_batch = lambda batch: batch
     if config.parallel.data_parallel:
         num_devices = jax.device_count()
@@ -59,7 +60,6 @@ def train(config: ExpConfig):
         nnx.update(optimizer, sharded_optim_state)
         
         shard_batch = lambda batch: jax.tree_util.tree_map(lambda x: jax.device_put(x, data_sharding), batch)
-
 
 
     def loss_fn(model, batch):
@@ -98,6 +98,7 @@ def train(config: ExpConfig):
     wandb.init(
         project="transformers",
         config=config,
+        name=f"DP={config.parallel.num_devices}-BS={config.optim.batch_size}",
     )
 
     train_iter = iter(dataset)
@@ -131,8 +132,8 @@ def train(config: ExpConfig):
             log_stats["step_time"] = step_time
             log_stats["tokens_consumed"] = tokens_consumed
             log_stats["tokens_per_second"] = tokens_per_batch / step_time
+            log_stats["tokens_per_second_per_device"] = log_stats["tokens_per_second"] / num_devices_used
             log_stats["lr"] = config.optim.lr if isinstance(config.optim.lr, float) else config.optim.lr(step)
-            log_stats["tokens_per_second_per_device"] = tokens_per_batch / step_time / num_devices_used
 
             pretty_log(step, log_stats)
             wandb.log(log_stats, step=step)
