@@ -106,6 +106,7 @@ def train(config: ExpConfig):
     wandb.init(
         project="transformers",
         config=config,
+        name=f"mfu-DP={config.parallel.data_parallel}-BS{config.optim.batch_size}"
     )
 
     train_iter = iter(dataset)
@@ -114,7 +115,7 @@ def train(config: ExpConfig):
     step = 0
     accum_steps = 0
     tokens_consumed = 0
-    gpu_peak_flops = get_gpu_peak_flops(config.gpu)
+    gpus_peak_flops = get_gpu_peak_flops(config.gpu) * config.parallel.data_parallel
 
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
@@ -140,7 +141,7 @@ def train(config: ExpConfig):
             log_stats["tokens_consumed"] = tokens_consumed
             log_stats["tokens_per_second"] = tokens_per_batch / step_time
             log_stats["tokens_per_second_per_device"] = log_stats["tokens_per_second"] / config.parallel.data_parallel
-            log_stats["mfu"] = ((nflops_per_token * log_stats["tokens_per_second"]) / gpu_peak_flops) * 100
+            log_stats["mfu"] = ((nflops_per_token * log_stats["tokens_per_second"]) / gpus_peak_flops) * 100
             log_stats["lr"] = config.optim.lr if isinstance(config.optim.lr, float) else config.optim.lr(step)
 
             pretty_log(step, log_stats)
