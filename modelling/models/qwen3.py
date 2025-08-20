@@ -61,18 +61,12 @@ class Qwen3(nnx.Module):
     def __init__(self, config: Qwen3Config, rngs: nnx.Rngs):
         super().__init__()
         self.config = config
-        self.token_embed = nnx.Embed(
+        self.token_embedding = nnx.Embed(
             num_embeddings=config.vocab_size,
             features=config.hidden_dim,
             dtype=config.dtype,
             rngs=rngs,
         )
-        # self.pos_embed = nnx.Embed(
-        #     num_embeddings=config.max_seq_len,
-        #     features=config.hidden_dim,
-        #     dtype=config.dtype,
-        #     rngs=rngs,
-        # )
         self.layers = [
             Qwen3Layer(
                 hidden_dim=config.hidden_dim,
@@ -92,10 +86,9 @@ class Qwen3(nnx.Module):
     def __call__(self, input_ids: jnp.ndarray, attention_mask: jnp.ndarray | None = None) -> jnp.ndarray:
         if attention_mask is None:
             attention_mask = nnx.make_causal_mask(input_ids)
-        x = self.token_embed(input_ids)
-        # x = x + self.pos_embed(jnp.arange(input_ids.shape[1]))
+        x = self.token_embedding(input_ids)
         for layer in self.layers:
             x = layer(x, attention_mask)
         x = self.lm_norm(x)
-        return self.token_embed.attend(x)
+        return self.token_embedding.attend(x)
     

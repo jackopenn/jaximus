@@ -32,6 +32,7 @@ model_config = Qwen3Config(
 data_config = DataConfig(
     source="hf",
     hf_name=["allenai/c4", "realnewslike"],
+    # hf_name=["HuggingFaceTB/smollm-corpus",  "fineweb-edu-dedup"],
     # tokenizer_name="Qwen/Qwen3-0.6B",
     tokenizer_name="gpt2",
     max_length=1024,
@@ -74,6 +75,7 @@ exp_config = ExpConfig(
     optim=optim_config,
     parallel=parallel_config,
     train=train_config,
+    gpu="5090",
 )
 
 from train import train

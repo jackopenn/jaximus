@@ -1,6 +1,6 @@
 import time
 import os
-from utils.common import pretty_log
+from utils.common import get_gpu_peak_flops, get_nparams_and_flops, pretty_log
 from utils.getters import get_dataset, get_model, get_optimizer
 from utils.configs import ExpConfig
 
@@ -85,8 +85,9 @@ def train(config: ExpConfig):
         return loss
 
 
-    num_params = sum(x.size for x in jax.tree_util.tree_leaves(nnx.state(model, nnx.Param)))
-    print(f"Number of trainable parameters: {num_params:,}")
+    nparams, nflops_per_token = get_nparams_and_flops(model)
+    print(f"Number of trainable parameters: {nparams:,}")
+    print(f"Number of FLOPS per token: {nflops_per_token:,}")
 
     ckpt_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/checkpoints/')
     ckpt_options = ocp.CheckpointManagerOptions(
@@ -113,6 +114,7 @@ def train(config: ExpConfig):
     step = 0
     accum_steps = 0
     tokens_consumed = 0
+    gpu_peak_flops = get_gpu_peak_flops(config.gpu)
 
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
@@ -138,6 +140,7 @@ def train(config: ExpConfig):
             log_stats["tokens_consumed"] = tokens_consumed
             log_stats["tokens_per_second"] = tokens_per_batch / step_time
             log_stats["tokens_per_second_per_device"] = log_stats["tokens_per_second"] / config.parallel.data_parallel
+            log_stats["mfu"] = ((nflops_per_token * log_stats["tokens_per_second"]) / gpu_peak_flops) * 100
             log_stats["lr"] = config.optim.lr if isinstance(config.optim.lr, float) else config.optim.lr(step)
 
             pretty_log(step, log_stats)

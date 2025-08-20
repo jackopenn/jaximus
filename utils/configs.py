@@ -50,3 +50,4 @@ class ExpConfig:
     optim: OptimConfig
     parallel: ParallelConfig
     train: TrainConfig
+    gpu: str
