@@ -106,7 +106,7 @@ def train(config: ExpConfig):
     wandb.init(
         project="transformers",
         config=config,
-        name=f"mfu-DP={config.parallel.data_parallel}-BS{config.optim.batch_size}"
+        name=f"{config.gpu}-mfu-DP={config.parallel.data_parallel}-BS={config.optim.batch_size}"
     )
 
     train_iter = iter(dataset)
