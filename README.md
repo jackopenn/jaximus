@@ -1,5 +1,4 @@
-# Jaximus 🚀
-
+# Jaximus 🚀 (Work in progress)
 **A barebones library for pretraining Large Language Models**
 
 Built with JAX ecosystem: **Jax/Flax/Optax/Orbax/Grain**
@@ -209,9 +208,9 @@ If you use Jaximus in your research, please cite:
 ```bibtex
 @software{jaximus,
   title={Jaximus: A Barebones Library for LLM Pretraining},
-  author={[Your Name]},
+  author={[Jack Pennington]},
   year={2024},
-  url={[Repository URL]}
+  url={[https://github.com/jackopenn/jaximus]}
 }
 ```
 
@@ -219,4 +218,4 @@ If you use Jaximus in your research, please cite:
 
 **Built with ❤️ and JAX**
 
-For questions, issues, or contributions, please visit our [GitHub repository](repository-url).
+For questions, issues, or contributions, please visit our [GitHub repository](https://github.com/jackopenn/jaximus).
