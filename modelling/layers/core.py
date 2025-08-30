@@ -31,24 +31,36 @@ class GLU(nnx.Module):
     def __call__(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
-
-class GroupedQueryAttention(nnx.Module):
-    def __init__(self, hidden_dim: int, num_attention_heads: int, num_key_value_heads: int, head_dim: int, rope_theta: int | None, rngs: jnp.ndarray, dtype: jnp.dtype, qk_norm: bool):
+class Attention(nnx.Module):
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_attention_heads: int, 
+        num_key_value_heads: int,
+        head_dim: int,
+        rope_theta: int | None, 
+        qk_norm: bool,
+        use_bias: bool,
+        dtype: jnp.dtype, 
+        rngs: jnp.ndarray
+    ):
         super().__init__()
+        self.hidden_dim = hidden_dim
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
         self.head_dim = head_dim
-        self.hidden_dim = hidden_dim
         self.rope_theta = rope_theta
         self.qk_norm = qk_norm
+        self.use_bias = use_bias
         self.dtype = dtype
 
-        self.q_proj = nnx.Linear(hidden_dim, num_attention_heads * head_dim, use_bias=False, dtype=dtype, rngs=rngs)
-        self.k_proj = nnx.Linear(hidden_dim, num_key_value_heads * head_dim, use_bias=False, dtype=dtype, rngs=rngs)
-        self.v_proj = nnx.Linear(hidden_dim, num_key_value_heads * head_dim, use_bias=False, dtype=dtype, rngs=rngs)
-        self.o_proj = nnx.Linear(num_attention_heads * head_dim, hidden_dim, use_bias=False, dtype=dtype, rngs=rngs)
+        self.q_proj = nnx.Linear(hidden_dim, num_attention_heads * head_dim, use_bias=use_bias, dtype=dtype, rngs=rngs)
+        self.k_proj = nnx.Linear(hidden_dim, num_key_value_heads * head_dim, use_bias=use_bias, dtype=dtype, rngs=rngs)
+        self.v_proj = nnx.Linear(hidden_dim, num_key_value_heads * head_dim, use_bias=use_bias, dtype=dtype, rngs=rngs)
 
-        if qk_norm:
+        self.o_proj = nnx.Linear(num_attention_heads * head_dim, hidden_dim, use_bias=use_bias, dtype=dtype, rngs=rngs)
+
+        if self.qk_norm:
             self.q_norm = nnx.RMSNorm(head_dim, dtype=jnp.float32, rngs=rngs)
             self.k_norm = nnx.RMSNorm(head_dim, dtype=jnp.float32, rngs=rngs)
 
@@ -72,7 +84,6 @@ class GroupedQueryAttention(nnx.Module):
             q = apply_rope(q, positions, base_frequency=self.rope_theta)
             k = apply_rope(k, positions, base_frequency=self.rope_theta)
 
-        # this does GQA
         mask = (mask == 1.0)
         att = jax.nn.dot_product_attention(query=q, key=k, value=v, mask=mask)
 

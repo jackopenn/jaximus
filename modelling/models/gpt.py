@@ -6,7 +6,7 @@ from jax import numpy as jnp
 
 from flax import nnx
 
-from modelling.layers.core import MLP
+from modelling.layers.core import MLP, Attention
 
 
 @dataclass
@@ -14,7 +14,8 @@ class GPTConfig:
     vocab_size: int
     hidden_dim: int
     num_layers: int
-    num_heads: int
+    num_attention_heads: int
+    head_dim: int
     intermediate_dim: int
     act_fn: Callable
     max_seq_len: int
@@ -27,7 +28,8 @@ class GPTLayer(nnx.Module):
     def __init__(
             self,
             hidden_dim: int,
-            num_heads: int,
+            num_attention_heads: int,
+            head_dim: int,
             intermediate_dim: int,
             act_fn: Callable,
             layer_norm_epsilon: float,
@@ -36,10 +38,13 @@ class GPTLayer(nnx.Module):
             rngs: nnx.Rngs,
     ):
         super().__init__()
-        self.attention = nnx.MultiHeadAttention(
-            num_heads=num_heads,
-            in_features=hidden_dim,
-            decode=False,
+        self.attention = Attention(
+            hidden_dim=hidden_dim,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_attention_heads,
+            head_dim=head_dim,
+            rope_theta=None,
+            qk_norm=False,
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
@@ -60,7 +65,7 @@ class GPT(nnx.Module):
     def __init__(self, config: GPTConfig, rngs: nnx.Rngs):
         super().__init__()
         self.config = config
-        self.token_embed = nnx.Embed(
+        self.token_embedding = nnx.Embed(
             num_embeddings=config.vocab_size,
             features=config.hidden_dim,
             dtype=config.dtype,
@@ -75,7 +80,8 @@ class GPT(nnx.Module):
         self.layers = [
             GPTLayer(
                 hidden_dim=config.hidden_dim,
-                num_heads=config.num_heads,
+                num_attention_heads=config.num_attention_heads,
+                head_dim=config.head_dim,
                 intermediate_dim=config.intermediate_dim,
                 act_fn=config.act_fn,
                 layer_norm_epsilon=config.layer_norm_epsilon,
@@ -95,10 +101,10 @@ class GPT(nnx.Module):
     def __call__(self, input_ids: jnp.ndarray, attention_mask: jnp.ndarray | None = None) -> jnp.ndarray:
         if attention_mask is None:
             attention_mask = nnx.make_causal_mask(input_ids)
-        x = self.token_embed(input_ids)
+        x = self.token_embedding(input_ids)
         x = x + self.pos_embed(jnp.arange(input_ids.shape[1]))
         for layer in self.layers:
             x = layer(x, attention_mask)
         x = self.ln_f(x)
-        return self.token_embed.attend(x)
+        return self.token_embedding.attend(x)
     

@@ -6,7 +6,7 @@ from jax import numpy as jnp
 
 from flax import nnx
 
-from modelling.layers.core import GLU, GroupedQueryAttention
+from modelling.layers.core import GLU, Attention
 
 @dataclass
 class Qwen3Config:
@@ -37,15 +37,16 @@ class Qwen3Layer(nnx.Module):
             rngs: nnx.Rngs,
     ):
         super().__init__()
-        self.attention = GroupedQueryAttention(
+        self.attention = Attention(
             hidden_dim=hidden_dim,
             num_attention_heads=num_attention_heads,
             num_key_value_heads=num_key_value_heads,
             head_dim=head_dim,
             rope_theta=rope_theta,
-            rngs=rngs,
             dtype=dtype,
-            qk_norm=True
+            qk_norm=True,
+            use_bias=False,
+            rngs=rngs
         )
         self.norm_1 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, rngs=rngs)
         self.mlp = GLU(hidden_dim, intermediate_dim, act_fn, use_bias=False, dtype=dtype, rngs=rngs)
