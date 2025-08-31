@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "array-record>=0.7.2",
+    "chz>=0.3.0",
     "datasets>=4.0.0",
     "flax>=0.11.0",
     "grain>=0.2.11",

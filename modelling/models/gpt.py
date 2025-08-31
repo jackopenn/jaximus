@@ -1,16 +1,13 @@
 from typing import Callable
-from dataclasses import dataclass
-
-import jax
 from jax import numpy as jnp
-
 from flax import nnx
-
 from modelling.layers.core import MLP, Attention
+import chz
+from utils.configs import ModelConfig
 
-
-@dataclass
-class GPTConfig:
+@chz.chz
+class GPTConfig(ModelConfig):
+    name: str = "gpt"
     vocab_size: int
     hidden_dim: int
     num_layers: int
@@ -21,7 +18,6 @@ class GPTConfig:
     max_seq_len: int
     layer_norm_epsilon: float
     use_bias: bool
-    dtype: jnp.dtype
 
 
 class GPTLayer(nnx.Module):

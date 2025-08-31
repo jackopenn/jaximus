@@ -1,53 +1,50 @@
-from dataclasses import dataclass
-from typing import Callable
+import chz
+from typing import Callable, List, Optional, Tuple
+from jax import numpy as jnp
 
-
-@dataclass
-class DataConfig:
-    source: str
-    hf_name: str
-    tokenizer_name: str
-    max_length: int
-
-
-@dataclass
+@chz.chz
 class ModelConfig:
     name: str
+    dtype: jnp.dtype
 
-
-@dataclass
-class OptimConfig:
+    
+@chz.chz
+class OptimizerConfig:
     name: str
-    batch_size: int
-    lr: float | Callable
     weight_decay: float
-    betas: tuple[float, float]
+    betas: Tuple[float, float]
     grad_clip: float
+    batch_size: int
     accum_steps: int
+    lr: float | Callable
 
 
-@dataclass
+@chz.chz
 class ParallelConfig:
     data_parallel: int
 
 
-@dataclass
-class TrainConfig:
-    num_steps: int
+@chz.chz
+class DataConfig:
+    source: str
+    hf_name: List[str]
+    tokenizer_name: str
+    max_length: int
+
+
+@chz.chz
+class ExperimentConfig:
+    name: str
+    model: ModelConfig
+    optimizer: OptimizerConfig
+    parallel: ParallelConfig
+    train_data: DataConfig
+    val_data: Optional[DataConfig]    
+    steps: int
     log_every: int
     generate_every: int
     eval_every: int
     save_every: int
     save_dir: str
-
-
-@dataclass
-class ExpConfig:
-    name: str
-    seed: int
-    model: ModelConfig
-    data: DataConfig
-    optim: OptimConfig
-    parallel: ParallelConfig
-    train: TrainConfig
     gpu: str
+    seed: int = 42

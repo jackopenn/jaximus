@@ -20,7 +20,6 @@ class Qwen3Config:
     act_fn: Callable
     max_seq_len: int
     rope_theta: int
-    dtype: jnp.dtype
 
 
 class Qwen3Layer(nnx.Module):

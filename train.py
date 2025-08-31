@@ -1,8 +1,10 @@
 import time
 import os
+
+import chz
 from utils.common import get_gpu_peak_flops, get_nparams_and_flops, pretty_log
 from utils.getters import get_dataset, get_model, get_optimizer
-from utils.configs import ExpConfig
+from utils.configs import ExperimentConfig
 
 import jax
 from jax import numpy as jnp
@@ -26,35 +28,35 @@ def generate(model, tokenizer, prompt, max_length):
     return tokenizer.decode(x[0])
 
 
-def train(config: ExpConfig):
+def train(cfg: ExperimentConfig):
 
 
-    assert config.train.generate_every % config.train.log_every == 0, (
+    assert cfg.generate_every % cfg.log_every == 0, (
         f"generate_every must be a multiple of log_every for accurate timing :)"
     )
-    # assert config.train.eval_every % config.train.log_every == 0, (
+    # assert cfg.eval_every % cfg.log_every == 0, (
     #     f"eval_every must be a multiple of log_every"
     # )
-    assert config.train.save_every % config.train.log_every == 0, (
+    assert cfg.save_every % cfg.log_every == 0, (
         f"save_every must be a multiple of log_every"
     )
 
-    tokenizer, dataset = get_dataset(config.data)
-    model = get_model(config.model, config.seed)
-    optimizer = get_optimizer(model,config.optim)
+    tokenizer, dataset = get_dataset(cfg.train_data)
+    model = get_model(cfg.model, cfg.seed)
+    optimizer = get_optimizer(model,cfg.optimizer)
 
-    dataset = dataset.batch(config.optim.batch_size)
+    dataset = dataset.batch(cfg.optimizer.batch_size)
 
 
     shard_batch = lambda batch: batch
-    if config.parallel.data_parallel > 1:
+    if cfg.parallel.data_parallel > 1:
         num_devices = jax.device_count()
 
-        assert 0 < config.parallel.data_parallel <= num_devices, (
+        assert 0 < cfg.parallel.data_parallel <= num_devices, (
             f"data_parallel must be less than or equal to the number of devices: {num_devices} and greater than 0"
         )
 
-        mesh = jax.make_mesh((config.parallel.data_parallel,), ("data",))
+        mesh = jax.make_mesh((cfg.parallel.data_parallel,), ("data",))
         data_sharding = NamedSharding(mesh, PartitionSpec("data", None))
         replicated_sharding = NamedSharding(mesh, PartitionSpec())
 
@@ -89,7 +91,7 @@ def train(config: ExpConfig):
     print(f"Number of trainable parameters: {nparams:,}")
     print(f"Number of FLOPS per token: {nflops_per_token:,}")
 
-    ckpt_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/checkpoints/')
+    ckpt_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/{cfg.save_dir}/')
     ckpt_options = ocp.CheckpointManagerOptions(
         max_to_keep=5,
         best_fn = lambda x: x,
@@ -105,23 +107,22 @@ def train(config: ExpConfig):
 
     wandb.init(
         project="transformers",
-        config=config,
-        name=f"{config.gpu}-mfu-DP={config.parallel.data_parallel}-BS={config.optim.batch_size}"
+        config=cfg,
     )
 
     train_iter = iter(dataset)
 
-    tokens_per_batch = config.optim.batch_size * config.data.max_length
+    tokens_per_batch = cfg.optimizer.batch_size * cfg.train_data.max_length
     step = 0
     accum_steps = 0
     tokens_consumed = 0
-    gpus_peak_flops = get_gpu_peak_flops(config.gpu) * config.parallel.data_parallel
+    gpus_peak_flops = get_gpu_peak_flops(cfg.gpu) * cfg.parallel.data_parallel
 
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     t0 = time.time()
-    while step < config.train.num_steps:
+    while step < cfg.steps:
         batch = next(train_iter)
         batch = shard_batch(batch)
 
@@ -130,32 +131,32 @@ def train(config: ExpConfig):
 
         tokens_consumed += tokens_per_batch
         
-        if step % config.train.log_every == 0 and accum_steps == 0:
+        if step % cfg.log_every == 0 and accum_steps == 0:
             loss.block_until_ready()
             t1 = time.time()
             
-            step_time = (t1 - t0) / (config.train.log_every * config.optim.accum_steps if step > 0 else 1)
+            step_time = (t1 - t0) / (cfg.log_every * cfg.optimizer.accum_steps if step > 0 else 1)
 
             log_stats = metrics.compute()
             log_stats["step_time"] = step_time
             log_stats["tokens_consumed"] = tokens_consumed
             log_stats["tokens_per_second"] = tokens_per_batch / step_time
-            log_stats["tokens_per_second_per_device"] = log_stats["tokens_per_second"] / config.parallel.data_parallel
+            log_stats["tokens_per_second_per_device"] = log_stats["tokens_per_second"] / cfg.parallel.data_parallel
             log_stats["mfu"] = ((nflops_per_token * log_stats["tokens_per_second"]) / gpus_peak_flops) * 100
-            log_stats["lr"] = config.optim.lr if isinstance(config.optim.lr, float) else config.optim.lr(step)
+            log_stats["lr"] = cfg.optimizer.lr if isinstance(cfg.optimizer.lr, float) else cfg.optimizer.lr(step)
 
             pretty_log(step, log_stats)
             wandb.log(log_stats, step=step)
             
             metrics.reset()
 
-            if step % config.train.generate_every == 0:
+            if step % cfg.generate_every == 0:
                 sample = generate(model, tokenizer, "What is the meaning of life?", 16)
                 print(f"step: {step}, sample: {sample}")
                 wandb.log({"sample": sample}, step=step)
             
 
-            if step > 0 and step % config.train.save_every == 0:
+            if step > 0 and step % cfg.save_every == 0:
                 _, state = nnx.split(model)
                 ckpt_mngr.save(step, metrics=log_stats['loss'].item(), args=ocp.args.StandardSave(state))
                 wandb.log_artifact(f"{ckpt_dir}/{step}", name=f"run_{wandb.run.id}_model", type="model", aliases=[f"step_{step}"])
@@ -163,6 +164,10 @@ def train(config: ExpConfig):
             t0 = time.time()
 
         accum_steps += 1
-        if accum_steps == config.optim.accum_steps:
+        if accum_steps == cfg.optimizer.accum_steps:
             accum_steps = 0
             step += 1
+            
+
+if __name__ == "__main__":
+    chz.nested_entrypoint(train)

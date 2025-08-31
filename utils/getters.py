@@ -3,7 +3,7 @@ from typing import Callable
 from data.hf import get_hf_dataset
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
-from utils.configs import DataConfig, ModelConfig, OptimConfig
+from utils.configs import DataConfig, ModelConfig, OptimizerConfig
 
 import optax
 import jax
@@ -29,7 +29,7 @@ def get_model(config: ModelConfig, seed: int):
     
 
 
-def get_optimizer(model, config: OptimConfig):
+def get_optimizer(model, config: OptimizerConfig):
     if config.name == "adamw":
         tx = optax.MultiSteps(
             optax.chain(

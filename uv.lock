@@ -3,21 +3,27 @@ requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version < '3.12' and platform_system == 'Darwin' and sys_platform == 'linux'",
     "python_full_version < '3.12' and platform_system == 'Darwin' and sys_platform != 'linux'",
-    "python_full_version < '3.13' and platform_system == 'Darwin' and sys_platform == 'linux'",
+    "python_full_version < '3.12' and platform_system == 'Darwin' and sys_platform == 'linux'",
+    "python_full_version == '3.12.*' and platform_system == 'Darwin' and sys_platform == 'linux'",
     "python_full_version >= '3.13' and platform_system == 'Darwin' and sys_platform == 'linux'",
-    "python_full_version < '3.13' and platform_system == 'Darwin' and sys_platform != 'linux'",
+    "python_full_version < '3.12' and platform_system == 'Darwin' and sys_platform != 'linux'",
+    "python_full_version == '3.12.*' and platform_system == 'Darwin' and sys_platform != 'linux'",
     "python_full_version >= '3.13' and platform_system == 'Darwin' and sys_platform != 'linux'",
     "(python_full_version < '3.12' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform == 'linux')",
     "(python_full_version < '3.12' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform != 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform != 'linux')",
-    "(python_full_version < '3.13' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform == 'linux')",
+    "(python_full_version < '3.12' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform == 'linux')",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform == 'linux')",
     "(python_full_version >= '3.13' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform == 'linux') or (python_full_version >= '3.13' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform == 'linux')",
-    "(python_full_version < '3.13' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform != 'linux') or (python_full_version < '3.13' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform != 'linux')",
+    "(python_full_version < '3.12' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform != 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform != 'linux')",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform != 'linux') or (python_full_version == '3.12.*' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform != 'linux')",
     "(python_full_version >= '3.13' and platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform != 'linux') or (python_full_version >= '3.13' and platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform != 'linux')",
     "(python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux')",
     "(python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform != 'linux') or (python_full_version < '3.12' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux')",
-    "(python_full_version < '3.13' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux')",
+    "(python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux')",
+    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux')",
     "(python_full_version >= '3.13' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform == 'linux') or (python_full_version >= '3.13' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux') or (python_full_version >= '3.13' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform == 'linux')",
-    "(python_full_version < '3.13' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform != 'linux') or (python_full_version < '3.13' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux') or (python_full_version < '3.13' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux')",
+    "(python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform != 'linux') or (python_full_version < '3.12' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux')",
+    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform != 'linux') or (python_full_version == '3.12.*' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux') or (python_full_version == '3.12.*' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux')",
     "(python_full_version >= '3.13' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Darwin' and sys_platform != 'linux') or (python_full_version >= '3.13' and platform_machine == 'aarch64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux') or (python_full_version >= '3.13' and platform_machine == 'x86_64' and platform_system != 'Darwin' and platform_system != 'Linux' and sys_platform != 'linux')",
 ]
 
@@ -301,13 +307,25 @@ dependencies = [
     { name = "jax" },
     { name = "jaxlib" },
     { name = "numpy" },
-    { name = "setuptools" },
+    { name = "setuptools", marker = "python_full_version >= '3.12'" },
     { name = "toolz" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/77/70/53c7d404ce9e2a94009aea7f77ef6e392f6740e071c62683a506647c520f/chex-0.1.90.tar.gz", hash = "sha256:d3c375aeb6154b08f1cccd2bee4ed83659ee2198a6acf1160d2fe2e4a6c87b5c", size = 92363 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6f/3d/46bb04776c465cea2dd8aa2d4b61ab610b707f798f47838ef7e6105b025c/chex-0.1.90-py3-none-any.whl", hash = "sha256:fce3de82588f72d4796e545e574a433aa29229cbdcf792555e41bead24b704ae", size = 101047 },
+]
+
+[[package]]
+name = "chz"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f8/63/d1758a5ee3f7af14681c9d440462b978e6dc4ef7b6bf367174de6d1f413a/chz-0.3.0.tar.gz", hash = "sha256:cdb7aecee4732b7dd5df0fad9fef1dbe3d9a8c2eddc0fb41076b3f09016b2c17", size = 75694 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f5/a4/cddff39d5df387bb1efe1b6213df1648cd1c6b75d8782fb7b23d3081467d/chz-0.3.0-py3-none-any.whl", hash = "sha256:f9761e72a3430b35e0200ed61747917f24b6975057e7b735f9555e1429bd7b9f", size = 51830 },
 ]
 
 [[package]]
@@ -831,6 +849,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "array-record" },
+    { name = "chz" },
     { name = "datasets" },
     { name = "flax" },
     { name = "grain" },
@@ -847,6 +866,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "array-record", specifier = ">=0.7.2" },
+    { name = "chz", specifier = ">=0.3.0" },
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "flax", specifier = ">=0.11.0" },
     { name = "grain", specifier = ">=0.2.11" },
