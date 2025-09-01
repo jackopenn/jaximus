@@ -7,8 +7,9 @@ from jax import numpy as jnp
 from flax import nnx
 
 from modelling.layers.core import GLU, Attention
+import chz
 
-@dataclass
+@chz.chz
 class Qwen3Config:
     vocab_size: int
     hidden_dim: int
