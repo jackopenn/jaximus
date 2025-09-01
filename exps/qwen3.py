@@ -59,7 +59,7 @@ experiment = ExperimentConfig(
     eval_every=-1,
     save_every=1_0000,
     save_dir="checkpoints",
-    gpu="5090",
+    gpu="H100",
 )
 
 

@@ -46,8 +46,8 @@ def get_nparams_and_flops(model):
 
 def get_gpu_peak_flops(gpu_name):   
     if gpu_name == "H100":
-        # return 1979e12/2 # SXM
-        return 1513e12/2 # PCIe
+        return 1979e12/2 # SXM
+        # return 1513e12/2 # PCIe
     elif gpu_name == "A100":
         return 624e12/2
     elif gpu_name == "5090":
