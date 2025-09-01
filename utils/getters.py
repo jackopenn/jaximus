@@ -3,6 +3,7 @@ from typing import Callable
 from data.hf import get_hf_dataset
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
+from modelling.models.llama import Llama, LlamaConfig
 from utils.configs import DataConfig, ModelConfig, OptimizerConfig
 
 import optax
@@ -24,6 +25,8 @@ def get_model(config: ModelConfig, seed: int):
         return GPT(config, nnx.Rngs(jax.random.PRNGKey(seed)))
     elif isinstance(config, Qwen3Config):
         return Qwen3(config, nnx.Rngs(jax.random.PRNGKey(seed)))
+    elif isinstance(config, LlamaConfig):
+        return Llama(config, nnx.Rngs(jax.random.PRNGKey(seed)))
     else:
         raise ValueError(f"Model {config.name} not found")
     

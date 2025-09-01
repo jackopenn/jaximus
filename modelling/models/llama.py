@@ -11,8 +11,8 @@ import chz
 from utils.configs import ModelConfig
 
 @chz.chz
-class Qwen3Config(ModelConfig):
-    name: str = "qwen3"
+class LlamaConfig(ModelConfig):
+    name: str = "llama"
     vocab_size: int
     hidden_dim: int
     num_layers: int
@@ -23,9 +23,12 @@ class Qwen3Config(ModelConfig):
     intermediate_dim: int
     max_seq_len: int
     rope_theta: int
+    rms_norm_eps: float
+    use_attention_bias: bool
+    use_mlp_bias: bool
 
 
-class Qwen3Layer(nnx.Module):
+class LlamaLayer(nnx.Module):
     def __init__(
             self,
             hidden_dim: int,
@@ -35,6 +38,9 @@ class Qwen3Layer(nnx.Module):
             intermediate_dim: int,
             act_fn: Callable,
             rope_theta: int,
+            rms_norm_eps: float,
+            use_attention_bias: bool,
+            use_mlp_bias: bool,
             dtype: jnp.dtype,
             rngs: nnx.Rngs,
     ):
@@ -46,13 +52,13 @@ class Qwen3Layer(nnx.Module):
             head_dim=head_dim,
             rope_theta=rope_theta,
             dtype=dtype,
-            qk_norm=True,
-            use_bias=False,
+            qk_norm=False,
+            use_bias=use_attention_bias,
             rngs=rngs
         )
-        self.norm_1 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, rngs=rngs)
-        self.mlp = GLU(hidden_dim, intermediate_dim, act_fn, use_bias=False, dtype=dtype, rngs=rngs)
-        self.norm_2 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, rngs=rngs)
+        self.norm_1 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, epsilon=rms_norm_eps, rngs=rngs)
+        self.mlp = GLU(hidden_dim, intermediate_dim, act_fn, use_bias=use_mlp_bias, dtype=dtype, rngs=rngs)
+        self.norm_2 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, epsilon=rms_norm_eps, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, attention_mask: jnp.ndarray) -> jnp.ndarray:
         x = x + self.attention(self.norm_1(x), mask=attention_mask)
@@ -60,8 +66,8 @@ class Qwen3Layer(nnx.Module):
         return x
 
 
-class Qwen3(nnx.Module):
-    def __init__(self, config: Qwen3Config, rngs: nnx.Rngs):
+class Llama(nnx.Module):
+    def __init__(self, config: LlamaConfig, rngs: nnx.Rngs):
         super().__init__()
         self.config = config
         self.token_embedding = nnx.Embed(
@@ -71,7 +77,7 @@ class Qwen3(nnx.Module):
             rngs=rngs,
         )
         self.layers = [
-            Qwen3Layer(
+            LlamaLayer(
                 hidden_dim=config.hidden_dim,
                 num_attention_heads=config.num_attention_heads,
                 num_key_value_heads=config.num_key_value_heads,
@@ -80,11 +86,14 @@ class Qwen3(nnx.Module):
                 act_fn=config.act_fn,
                 rope_theta=config.rope_theta,
                 dtype=config.dtype,
+                rms_norm_eps=config.rms_norm_eps,
+                use_attention_bias=config.use_attention_bias,
+                use_mlp_bias=config.use_mlp_bias,
                 rngs=rngs
             )
             for _ in range(config.num_layers)
         ]
-        self.lm_norm = nnx.RMSNorm(config.hidden_dim, dtype=jnp.float32, rngs=rngs)
+        self.lm_norm = nnx.RMSNorm(config.hidden_dim, dtype=jnp.float32, epsilon=config.rms_norm_eps, rngs=rngs)
 
     def __call__(self, input_ids: jnp.ndarray, attention_mask: jnp.ndarray | None = None) -> jnp.ndarray:
         if attention_mask is None:

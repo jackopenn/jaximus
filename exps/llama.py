@@ -6,23 +6,24 @@ from jax import numpy as jnp
 from flax import nnx
 import optax
 
+from modelling.models.llama import LlamaConfig
 from utils.configs import DataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
 
-from modelling.models.gpt import GPTConfig
 
-# (16, 2048, 32, 8192)
-
-model_config = GPTConfig(
-    vocab_size=50257,
+model_config = LlamaConfig(
+    vocab_size=128256,
     hidden_dim=2048,
     num_layers=16,
     num_attention_heads=32,
+    num_key_value_heads=8,
     intermediate_dim=8192,
     head_dim=64,
-    act_fn=nnx.gelu,
-    max_seq_len=1024,
-    layer_norm_epsilon=1e-5,
-    use_bias=False,
+    act_fn=nnx.silu,
+    max_seq_len=4096,
+    use_attention_bias=False,
+    use_mlp_bias=False,
+    rms_norm_eps=1e-5,
+    rope_theta=500000,
     dtype=jnp.bfloat16,
 )
 
@@ -30,7 +31,7 @@ train_data = DataConfig(
     source="hf",
     hf_name=["allenai/c4", "realnewslike"],
     tokenizer_name="gpt2",
-    max_length=1024,
+    max_length=4096,
 )
 
 optim_config = OptimizerConfig(
@@ -55,7 +56,7 @@ parallel_config = ParallelConfig(
 )
 
 exp_config = ExperimentConfig(
-    name="gpt2",
+    name="llama",
     seed=42,
     model=model_config,
     optimizer=optim_config,

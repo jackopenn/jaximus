@@ -8,8 +8,22 @@ def pretty_log(step, metrics):
         #     print(f"{k}: {v:.5f}", end=", ")
         # else:
         #     print(f"{k}: {v}", end=", ")
-        print(f"{k}: {v:.5f}", end=", ")
+        print(f"{k}: {human_format(v)}", end=", ")
     print()
+
+# https://github.com/huggingface/nanotron/blob/7bc9923285a03069ebffe994379a311aceaea546/src/nanotron/logging/base.py#L268
+def human_format(num: float, billions: bool = False, divide_by_1024: bool = False) -> str:
+    if abs(num) < 1:
+        return "{:.3g}".format(num)
+    SIZES = ["", "K", "M", "B", "T", "P", "E"]
+    num = float("{:.3g}".format(num))
+    magnitude = 0
+    i = 0
+    while abs(num) >= 1000 and i < len(SIZES) - 1:
+        magnitude += 1
+        num /= 1000.0 if not divide_by_1024 else 1024.0
+        i += 1
+    return "{}{}".format("{:f}".format(num).rstrip("0").rstrip("."), SIZES[magnitude])
 
 
 def get_nparams_and_flops(model):
