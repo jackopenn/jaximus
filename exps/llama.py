@@ -7,16 +7,16 @@ from flax import nnx
 import optax
 
 from modelling.models.llama import LlamaConfig
-from utils.configs import DataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
+from utils.configs import DataConfig, DummyDataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
 
 
 model_config = LlamaConfig(
     vocab_size=128256,
-    hidden_dim=2048,
-    num_layers=16,
+    hidden_dim=1024,
+    num_layers=1,
     num_attention_heads=32,
     num_key_value_heads=8,
-    intermediate_dim=8192,
+    intermediate_dim=2048,
     head_dim=64,
     act_fn=nnx.silu,
     max_seq_len=4096,
@@ -27,10 +27,11 @@ model_config = LlamaConfig(
     dtype=jnp.bfloat16,
 )
 
-train_data = DataConfig(
-    source="hf",
-    hf_name=["allenai/c4", "realnewslike"],
-    tokenizer_name="gpt2",
+train_data = DummyDataConfig(
+    # source="hf",
+    # hf_name=["allenai/c4", "realnewslike"],
+    # tokenizer_name="gpt2",
+    source="dummy",
     max_length=4096,
 )
 
@@ -39,8 +40,8 @@ optim_config = OptimizerConfig(
     weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=2,
-    accum_steps=16,
+    batch_size=8,
+    accum_steps=32,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,

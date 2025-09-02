@@ -27,10 +27,18 @@ class ParallelConfig:
 @chz.chz
 class DataConfig:
     source: str
-    hf_name: List[str]
-    tokenizer_name: str
+    # hf_name: List[str]
+    # tokenizer_name: str
     max_length: int
 
+@chz.chz
+class HFDataConfig(DataConfig):
+    hf_name: List[str]
+    tokenizer_name: str
+
+@chz.chz
+class DummyDataConfig(DataConfig):
+    pass
 
 @chz.chz
 class ExperimentConfig:

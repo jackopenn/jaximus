@@ -18,6 +18,9 @@ import wandb
 import orbax.checkpoint as ocp
 
 
+jax.config.update('jax_num_cpu_devices', 8)
+
+
 def generate(model, tokenizer, prompt, max_length):
     x = tokenizer.encode(prompt, return_tensors="np")
     x = x.reshape(1, -1)
@@ -46,6 +49,9 @@ def train(cfg: ExperimentConfig):
     optimizer = get_optimizer(model,cfg.optimizer)
 
     dataset = dataset.batch(cfg.optimizer.batch_size)
+    
+    print(cfg.optimizer.batch_size, next(iter(dataset))[0].shape)
+
 
 
     shard_batch = lambda batch: batch

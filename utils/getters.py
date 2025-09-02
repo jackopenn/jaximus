@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable
+from data.dummy import get_dummy_dataset
 from data.hf import get_hf_dataset
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
@@ -15,6 +16,10 @@ def get_dataset(config: DataConfig):
         return get_hf_dataset(
             hf_name=config.hf_name,
             tokenizer_name=config.tokenizer_name,
+            max_length=config.max_length,
+        )
+    elif config.source == "dummy":
+        return get_dummy_dataset(
             max_length=config.max_length,
         )
     else:
