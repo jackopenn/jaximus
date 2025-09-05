@@ -1,3 +1,5 @@
+import os 
+
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -12,11 +14,11 @@ from utils.configs import DataConfig, DummyDataConfig, HFDataConfig, OptimizerCo
 
 model_config = LlamaConfig(
     vocab_size=128256,
-    hidden_dim=1024,
-    num_layers=1,
+    hidden_dim=2048,
+    num_layers=16,
     num_attention_heads=32,
     num_key_value_heads=8,
-    intermediate_dim=2048,
+    intermediate_dim=8192,
     head_dim=64,
     act_fn=nnx.silu,
     max_seq_len=4096,
@@ -32,7 +34,7 @@ train_data = HFDataConfig(
      source="hf",
      hf_name=["allenai/c4", "realnewslike"],
      tokenizer_name="gpt2",
-     source="dummy",
+    #  source="dummy",
     max_length=4096,
 )
 
@@ -74,7 +76,7 @@ exp_config = ExperimentConfig(
     trace_dir="traces",
     start_trace_step=10,
     end_trace_step=20,
-    gpu="5090",
+    gpu="H100",
 )
 
 from train import train

@@ -17,6 +17,8 @@ dependencies = [
     "numpy>=2.3.2",
     "optax>=0.2.5",
     "orbax-checkpoint>=0.11.21",
+    "tensorflow>=2.20.0",
     "transformers>=4.55.0",
     "wandb>=0.21.1",
+    "xprof>=2.20.6",
 ]

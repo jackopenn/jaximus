@@ -84,8 +84,9 @@ class Attention(nnx.Module):
             q = apply_rope(q, positions, base_frequency=self.rope_theta)
             k = apply_rope(k, positions, base_frequency=self.rope_theta)
 
-        mask = (mask == 1.0)
-        att = jax.nn.dot_product_attention(query=q, key=k, value=v, mask=mask)
+        # mask = (mask == 1.0)
+        with jax.profiler.TraceAnnotation("attention"):
+            att = jax.nn.dot_product_attention(query=q, key=k, value=v, is_causal=True, implementation="cudnn")
 
         return self.o_proj(att.reshape(B, S, -1))
     

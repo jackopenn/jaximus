@@ -1,6 +1,5 @@
 import time
 import os
-
 import chz
 from utils.common import get_gpu_peak_flops, get_nparams_and_flops, pretty_log
 from utils.getters import get_dataset, get_model, get_optimizer
@@ -29,6 +28,11 @@ def generate(model, tokenizer, prompt, max_length):
 
 
 def train(cfg: ExperimentConfig):
+    # os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+    jax.config.update("jax_compiler_enable_remat_pass", False)
+    profiler_options = jax.profiler.ProfileOptions()
+    profiler_options.host_tracer_level = 3
 
 
     assert cfg.generate_every % cfg.log_every == 0, (
@@ -128,7 +132,7 @@ def train(cfg: ExperimentConfig):
     while step < cfg.steps:
         
         if step == cfg.start_trace_step:
-            jax.profiler.start_trace(cfg.trace_dir)
+            jax.profiler.start_trace(cfg.trace_dir, profiler_options=profiler_options)
         
         batch = next(train_iter)
         batch = shard_batch(batch)
