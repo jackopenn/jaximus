@@ -121,12 +121,24 @@ def train(cfg: ExperimentConfig):
 
     tokens_per_batch = cfg.optimizer.batch_size * cfg.train_data.max_length
     step = 0
-    accum_steps = 0
+    micro_step = 0
     tokens_consumed = 0
     gpus_peak_flops = get_gpu_peak_flops(cfg.gpu) * cfg.parallel.data_parallel
 
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
+    
+    # warmup
+    t0 = time.time()
+    batch = shard_batch(next(train_iter))
+    loss = cached_train_step(batch)
+    loss.block_until_ready()
+    t1 = time.time()
+    print(f"warmup time: {t1 - t0}")
+    tokens_consumed += tokens_per_batch
+    micro_step += 1
+    step = micro_step // cfg.optimizer.accum_steps
+    
 
     t0 = time.time()
     while step < cfg.steps:
@@ -145,8 +157,10 @@ def train(cfg: ExperimentConfig):
             jax.profiler.stop_trace()
 
         tokens_consumed += tokens_per_batch
+        micro_step += 1
         
-        if step % cfg.log_every == 0 and accum_steps == 0:
+
+        if step % cfg.log_every == 0 and micro_step % cfg.optimizer.accum_steps == 0:
             loss.block_until_ready()
             t1 = time.time()
             
@@ -178,9 +192,7 @@ def train(cfg: ExperimentConfig):
             
             t0 = time.time()
 
-        accum_steps += 1
-        if accum_steps == cfg.optimizer.accum_steps:
-            accum_steps = 0
+        if micro_step % cfg.optimizer.accum_steps == 0:
             step += 1
             
 
