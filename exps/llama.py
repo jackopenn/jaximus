@@ -1,5 +1,8 @@
 import os 
 
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "false"
+
 from dataclasses import dataclass, field
 from typing import Callable
 

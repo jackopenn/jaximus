@@ -28,9 +28,6 @@ def generate(model, tokenizer, prompt, max_length):
 
 
 def train(cfg: ExperimentConfig):
-    # os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
-    jax.config.update("jax_compiler_enable_remat_pass", False)
     profiler_options = jax.profiler.ProfileOptions()
     profiler_options.host_tracer_level = 3
 
@@ -117,54 +114,39 @@ def train(cfg: ExperimentConfig):
         config=cfg,
     )
 
+    # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
+    cached_train_step = nnx.cached_partial(train_step, model, optimizer)
+
     train_iter = iter(dataset)
 
     tokens_per_batch = cfg.optimizer.batch_size * cfg.train_data.max_length
-    step = 0
+    step = 1
     micro_step = 0
     tokens_consumed = 0
     gpus_peak_flops = get_gpu_peak_flops(cfg.gpu) * cfg.parallel.data_parallel
 
-    # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
-    cached_train_step = nnx.cached_partial(train_step, model, optimizer)
-    
-    # warmup
     t0 = time.time()
-    batch = shard_batch(next(train_iter))
-    loss = cached_train_step(batch)
-    loss.block_until_ready()
-    t1 = time.time()
-    print(f"warmup time: {t1 - t0}")
-    tokens_consumed += tokens_per_batch
-    micro_step += 1
-    step = micro_step // cfg.optimizer.accum_steps
-    
-
-    t0 = time.time()
-    while step < cfg.steps:
+    while step <= cfg.steps:
         
-        if step == cfg.start_trace_step:
+        if micro_step == cfg.start_trace_micro_step:
             jax.profiler.start_trace(cfg.trace_dir, profiler_options=profiler_options)
         
-        batch = next(train_iter)
-        batch = shard_batch(batch)
-
+        batch = shard_batch(next(train_iter))
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
             loss = cached_train_step(batch)
         metrics.update(loss=loss)
 
-        if step == cfg.end_trace_step:
+        if micro_step == cfg.end_trace_micro_step:
             jax.profiler.stop_trace()
 
         tokens_consumed += tokens_per_batch
         micro_step += 1
-        
 
-        if step % cfg.log_every == 0 and micro_step % cfg.optimizer.accum_steps == 0:
+        if (step == 1 or step % cfg.log_every == 0) and micro_step % cfg.optimizer.accum_steps == 0:
             loss.block_until_ready()
             t1 = time.time()
             
-            step_time = (t1 - t0) / (cfg.log_every * cfg.optimizer.accum_steps if step > 0 else 1)
+            step_time = (t1 - t0) / (cfg.log_every * cfg.optimizer.accum_steps if step > 1 else cfg.optimizer.accum_steps)
 
             log_stats = metrics.compute()
             log_stats["step_time"] = step_time
