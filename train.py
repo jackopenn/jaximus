@@ -18,9 +18,6 @@ import wandb
 import orbax.checkpoint as ocp
 
 
-jax.config.update('jax_num_cpu_devices', 8)
-
-
 def generate(model, tokenizer, prompt, max_length):
     x = tokenizer.encode(prompt, return_tensors="np")
     x = x.reshape(1, -1)
