@@ -129,11 +129,19 @@ def train(cfg: ExperimentConfig):
 
     t0 = time.time()
     while step < cfg.steps:
+        
+        if step == cgf.start_trace_step:
+            jax.profiler.start_trace(cfg.trace_dir)
+        
         batch = next(train_iter)
         batch = shard_batch(batch)
 
-        loss = cached_train_step(batch)
+        with jax.profiler.StepTraceAnnotation("train", step_num=step):
+            loss = cached_train_step(batch)
         metrics.update(loss=loss)
+
+        if step == cgf.end_trace_step:
+            jax.profiler.stop_trace()
 
         tokens_consumed += tokens_per_batch
         

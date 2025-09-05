@@ -65,12 +65,15 @@ exp_config = ExperimentConfig(
     parallel=parallel_config,
     train_data=train_data,
     val_data=None,
-    steps=1000,
-    log_every=1,
+    steps=100,
+    log_every=50,
     generate_every=10000,
     eval_every=-1,
     save_every=1_0000,
     save_dir="checkpoints",
+    trace_dir="traces",
+    start_trace_step=10,
+    end_trace_step=20,
     gpu="5090",
 )
 
