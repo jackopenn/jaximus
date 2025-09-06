@@ -46,11 +46,6 @@ def train(cfg: ExperimentConfig):
     model = get_model(cfg.model, cfg.seed)
     optimizer = get_optimizer(model,cfg.optimizer)
 
-    # dataset = dataset.batch(cfg.optimizer.batch_size)
-    sample = next(iter(dataset))
-    print(sample)
-    print(sample[0].shape)
-
     shard_batch = lambda batch: batch
     if cfg.parallel.data_parallel > 1:
         num_devices = jax.device_count()
@@ -117,9 +112,7 @@ def train(cfg: ExperimentConfig):
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     train_iter = iter(dataset)
-
-    print(next(train_iter))
-
+    
     tokens_per_batch = cfg.optimizer.batch_size * cfg.train_data.max_length
     step = 1
     micro_step = 0
@@ -163,7 +156,7 @@ def train(cfg: ExperimentConfig):
             metrics.reset()
 
             if step % cfg.generate_every == 0:
-                sample = generate(model, tokenizer, "What is the meaning of life?", 16)
+                sample = generate(model, tokenizer, "What is the meaning of life?", 64)
                 print(f"step: {step}, sample: {sample}")
                 wandb.log({"sample": sample}, step=step)
             

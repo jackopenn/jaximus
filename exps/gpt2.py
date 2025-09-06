@@ -1,3 +1,8 @@
+import os
+
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "true"
+
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -12,13 +17,13 @@ from modelling.models.gpt import GPTConfig
 
 sequence_length = 1024
 
-max_steps = 600_000
-warmup_steps = 2000
+max_steps = 20_000
+warmup_steps = 700
 
 model_config = GPTConfig(
-    vocab_size=50257,
+    vocab_size=50304,
     hidden_dim=768,
-    num_layers=16,
+    num_layers=12,
     num_attention_heads=12,
     intermediate_dim=3072,
     head_dim=64,
@@ -31,18 +36,19 @@ model_config = GPTConfig(
 
 train_data = HFDataConfig(
     source="hf",
-    hf_name=["HuggingFaceFW/fineweb", "sample-10BT"],
+    hf_name=["HuggingFaceFW/fineweb-edu"],
     tokenizer_name="gpt2",
     max_length=sequence_length,
 )
 
+
 optim_config = OptimizerConfig(
     name="adamw",
-    weight_decay=0.01,
+    weight_decay=0.1,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=1,
-    accum_steps=1,
+    batch_size=128,
+    accum_steps=4,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,
@@ -67,9 +73,9 @@ exp_config = ExperimentConfig(
     val_data=None,
     steps=max_steps,
     log_every=1,
-    generate_every=10000,
+    generate_every=1000,
     eval_every=-1,
-    save_every=1_0000,
+    save_every=5000,
     save_dir="checkpoints",
     trace_dir="traces",
     start_trace_micro_step=10,

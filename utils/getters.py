@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable
 from data.dummy import get_dummy_dataset
-from data.hf import get_hf_dataset
+from data.hf import get_hf_dataset, get_hf_dataset_old
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
 from modelling.models.llama import Llama, LlamaConfig
@@ -46,6 +46,7 @@ def get_optimizer(model, config: OptimizerConfig):
                 optax.adamw(
                     learning_rate=config.lr,
                     weight_decay=config.weight_decay,
+                    mask=lambda params: jax.tree.map(lambda x: x.ndim != 1, params), # only wd for 2d tensors
                     b1=config.betas[0],
                     b2=config.betas[1],
                 )

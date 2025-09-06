@@ -100,7 +100,8 @@ def get_hf_dataset(
 def get_hf_dataset_old(
         hf_name: List[str],
         tokenizer_name: str,
-        max_length: int,
+        sequence_length: int,
+        batch_size: int,
         num_proc: int = 4,
         split: str = "train",
 ):
@@ -114,9 +115,9 @@ def get_hf_dataset_old(
 
     ds = grain.experimental.ConcatThenSplitIterDataset(
         parent=parent_ds,
-        length_struct={"tokens": max_length+1},
+        length_struct={"tokens": sequence_length+1},
     )
 
-    ds = ds.map(lambda x: (x['tokens'][:-1], x['tokens'][1:]))
+    ds = ds.map(lambda x: (x['tokens'][:-1], x['tokens'][1:])).batch(batch_size)
 
     return tokenizer, ds
