@@ -1,10 +1,103 @@
 from datasets import load_dataset
 from transformers import AutoTokenizer
 import grain
-from typing import List
+from typing import List, Callable, Iterator, Any
 import numpy as np
+import os
+
+class HFStreamingDataSource(grain.sources.RandomAccessDataSource):
+    def __init__(self, iterable_ds):
+        self._ds = iterable_ds
+        self._it = None
+
+    def __len__(self) -> int:
+        return 10_000_000_000
+
+    def __getitem__(self, record_key: int):
+        if self._it is None:
+            self._it = iter(self._ds)
+        try:
+            return next(self._it)
+        except StopIteration:
+            self._it = iter(self._ds)
+            return next(self._it)
+
+
+
+class GetInputAndTarget(grain.transforms.Map):
+  def map(self, x: int) -> int:
+    return x['input_ids'][:-1], x['input_ids'][1:]
+
+
 
 def get_hf_dataset(
+    hf_name: List[str],
+    tokenizer_name: str,
+    sequence_length: int,
+    batch_size: int,
+    split: str = "train",
+):
+        
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, add_bos_token=True)
+
+    # https://github.com/huggingface/nanotron/blob/7bc9923285a03069ebffe994379a311aceaea546/src/nanotron/data/processing.py#L47
+    def group_texts(examples):
+        # Concatenate all texts.
+        concatenated_examples = {k: np.concatenate(v) for k, v in examples.items()}
+        total_length = len(concatenated_examples[next(iter(examples.keys()))])
+        # WARNING: We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
+        # customize this part to your needs.
+        if total_length >= sequence_length + 1:
+            total_length = ((total_length - 1) // sequence_length) * sequence_length + 1
+        # Split by chunks of sequence_length.
+        result = {
+            k: [
+                t[i : i + sequence_length + 1] for i in range(0, total_length - (sequence_length + 1), sequence_length)
+            ]
+            for k, t in concatenated_examples.items()
+        }
+        return result
+
+    def tokenize_and_group_texts(texts):
+        tokenized_batch = tokenizer(texts, return_attention_mask=False, return_token_type_ids=False, return_tensors="np")
+        grouped_batch = group_texts(tokenized_batch)
+        return grouped_batch
+
+
+    hf_ds = load_dataset(*hf_name, split=split, streaming=True)
+    hf_ds = hf_ds.map(
+        tokenize_and_group_texts,
+        input_columns=["text"],
+        remove_columns=hf_ds.column_names,
+        batched=True,
+    )
+
+    source = HFStreamingDataSource(hf_ds)
+
+    sampler = grain.samplers.IndexSampler(
+        num_records=len(source),
+        shuffle=False,
+        seed=0,
+    )
+
+
+    operations = []
+    operations.append(GetInputAndTarget())
+    operations.append(grain.transforms.Batch(batch_size))
+
+    data_loader = grain.DataLoader(
+        data_source=source,
+        sampler=sampler,
+        operations=operations,
+        worker_count=0,
+        read_options=grain.ReadOptions(num_threads=1, prefetch_buffer_size=128),
+    )
+
+    return tokenizer, data_loader
+
+
+
+def get_hf_dataset_old(
         hf_name: List[str],
         tokenizer_name: str,
         max_length: int,

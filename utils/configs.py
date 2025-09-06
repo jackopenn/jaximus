@@ -55,7 +55,7 @@ class ExperimentConfig:
     save_every: int
     save_dir: str
     trace_dir: str
-    start_trace_step: int
-    end_trace_step: int
+    start_trace_micro_step: int
+    end_trace_micro_step: int
     gpu: str
     seed: int = 42

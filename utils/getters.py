@@ -11,12 +11,13 @@ import optax
 import jax
 from flax import nnx
 
-def get_dataset(config: DataConfig):
+def get_dataset(config: DataConfig, batch_size: int):
     if config.source == "hf":
         return get_hf_dataset(
             hf_name=config.hf_name,
             tokenizer_name=config.tokenizer_name,
-            max_length=config.max_length,
+            sequence_length=config.max_length,
+            batch_size=batch_size
         )
     elif config.source == "dummy":
         return get_dummy_dataset(

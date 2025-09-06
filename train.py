@@ -42,15 +42,14 @@ def train(cfg: ExperimentConfig):
         f"save_every must be a multiple of log_every"
     )
 
-    tokenizer, dataset = get_dataset(cfg.train_data)
+    tokenizer, dataset = get_dataset(cfg.train_data, cfg.optimizer.batch_size)
     model = get_model(cfg.model, cfg.seed)
     optimizer = get_optimizer(model,cfg.optimizer)
 
-    dataset = dataset.batch(cfg.optimizer.batch_size)
-    
-    print(cfg.optimizer.batch_size, next(iter(dataset))[0].shape)
-
-
+    # dataset = dataset.batch(cfg.optimizer.batch_size)
+    sample = next(iter(dataset))
+    print(sample)
+    print(sample[0].shape)
 
     shard_batch = lambda batch: batch
     if cfg.parallel.data_parallel > 1:
@@ -118,6 +117,8 @@ def train(cfg: ExperimentConfig):
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     train_iter = iter(dataset)
+
+    print(next(train_iter))
 
     tokens_per_batch = cfg.optimizer.batch_size * cfg.train_data.max_length
     step = 1

@@ -6,31 +6,34 @@ from jax import numpy as jnp
 from flax import nnx
 import optax
 
-from utils.configs import DataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
+from utils.configs import OptimizerConfig, ExperimentConfig, ParallelConfig, HFDataConfig
 
 from modelling.models.gpt import GPTConfig
 
-# (16, 2048, 32, 8192)
+sequence_length = 1024
+
+max_steps = 600_000
+warmup_steps = 2000
 
 model_config = GPTConfig(
     vocab_size=50257,
-    hidden_dim=2048,
+    hidden_dim=768,
     num_layers=16,
-    num_attention_heads=32,
-    intermediate_dim=8192,
+    num_attention_heads=12,
+    intermediate_dim=3072,
     head_dim=64,
     act_fn=nnx.gelu,
-    max_seq_len=1024,
+    max_seq_len=sequence_length,
     layer_norm_epsilon=1e-5,
     use_bias=False,
     dtype=jnp.bfloat16,
 )
 
-train_data = DataConfig(
+train_data = HFDataConfig(
     source="hf",
-    hf_name=["allenai/c4", "realnewslike"],
+    hf_name=["HuggingFaceFW/fineweb", "sample-10BT"],
     tokenizer_name="gpt2",
-    max_length=1024,
+    max_length=sequence_length,
 )
 
 optim_config = OptimizerConfig(
@@ -43,8 +46,8 @@ optim_config = OptimizerConfig(
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,
-        warmup_steps=1_000,
-        decay_steps=99_000,
+        warmup_steps=warmup_steps,
+        decay_steps=max_steps - warmup_steps,
         end_value=6e-5
     )
 )
@@ -62,13 +65,16 @@ exp_config = ExperimentConfig(
     parallel=parallel_config,
     train_data=train_data,
     val_data=None,
-    steps=1000,
+    steps=max_steps,
     log_every=1,
     generate_every=10000,
     eval_every=-1,
     save_every=1_0000,
     save_dir="checkpoints",
-    gpu="5090",
+    trace_dir="traces",
+    start_trace_micro_step=10,
+    end_trace_micro_step=20,
+    gpu="H100",
 )
 
 from train import train

@@ -45,9 +45,9 @@ class GPTLayer(nnx.Module):
             dtype=dtype,
             rngs=rngs,
         )
-        self.ln_1 = nnx.LayerNorm(num_features=hidden_dim, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
+        self.ln_1 = nnx.LayerNorm(num_features=hidden_dim, use_bias=use_bias, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
         self.mlp = MLP(hidden_dim, intermediate_dim, act_fn, use_bias, dtype=dtype, rngs=rngs)
-        self.ln_2 = nnx.LayerNorm(num_features=hidden_dim, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
+        self.ln_2 = nnx.LayerNorm(num_features=hidden_dim, use_bias=use_bias, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, attention_mask: jnp.ndarray) -> jnp.ndarray:
         x = x + self.attention(x, mask=attention_mask)
@@ -89,6 +89,7 @@ class GPT(nnx.Module):
         ]
         self.ln_f = nnx.LayerNorm(
             num_features=config.hidden_dim,
+            use_bias=config.use_bias,
             epsilon=config.layer_norm_epsilon,
             dtype=jnp.float32,
             rngs=rngs,
