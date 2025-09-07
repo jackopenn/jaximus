@@ -81,7 +81,7 @@ exp_config = ExperimentConfig(
     trace_dir="traces",
     start_trace_micro_step=10,
     end_trace_micro_step=20,
-    gpu="A100",
+    gpu="H100",
 )
 
 from train import train

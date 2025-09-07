@@ -177,7 +177,7 @@ def train(cfg: ExperimentConfig):
                     "5+7=",
                     "What is the capital of France?",
                 ]:
-                    samples = generate(model, tokenizer, prompt, 128, n_samples=10, top_k=50, temperature=1.0)
+                    samples = generate(model, tokenizer, prompt, max_length=128, n_samples=10, top_k=50, temperature=1.0)
                     print(f"prompt: {prompt}")
                     for i, sample in enumerate(samples):
                         print(f"sample {i}: {sample}")
