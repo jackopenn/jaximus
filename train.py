@@ -1,6 +1,7 @@
 import time
 import os
 import chz
+from functools import partial
 from utils.common import get_gpu_peak_flops, get_nparams_and_flops, pretty_log
 from utils.getters import get_dataset, get_model, get_optimizer
 from utils.configs import ExperimentConfig
@@ -16,15 +17,28 @@ import wandb
 
 import orbax.checkpoint as ocp
 
+@partial(jax.jit, static_argnames=["n_samples", "top_k", "temperature"])
+def sample(model, tokens, n_samples=1, top_k=50, temperature=1.0):
+    for _ in range(n_samples):
+        logits = model(tokens)
+        logits = logits[:, -1, :] / temperature
+        _, indices = jax.lax.top_k(logits, k=top_k)
+        # logits[:, indices] = -jnp.inf
+        # print(logits.shape, indices.shape)
+        logits = logits.at[:, indices].set(-jnp.inf)
+        next_token = jax.random.categorical(jax.random.PRNGKey(0), logits, shape=(n_samples,))
+        tokens = jnp.concatenate([tokens, next_token.reshape(-1, 1)], axis=1)
+    return tokens
 
-def generate(model, tokenizer, prompt, max_length):
-    x = tokenizer.encode(prompt, return_tensors="np")
-    x = x.reshape(1, -1)
-    for _ in range(max_length):
-        logits = model(x)
-        next_token = jnp.argmax(logits[0,-1, :], axis=-1)
-        x = jnp.concatenate([x, next_token.reshape(1, 1)], axis=1)
-    return tokenizer.decode(x[0])
+
+def generate(model, tokenizer, prompt, max_length, n_samples=1, top_k=50, temperature=1.0):
+    x = tokenizer.encode(prompt, return_tensors="np")[0]
+    x = jnp.stack(jnp.concatenate([jnp.array([tokenizer.bos_token_id]), x]))
+    x = jnp.stack([x for _ in range(n_samples)])
+    
+    x = sample(model, x, n_samples, top_k, temperature)
+
+    return tokenizer.batch_decode(x[:, 1:])
 
 
 def train(cfg: ExperimentConfig):
@@ -113,8 +127,16 @@ def train(cfg: ExperimentConfig):
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
-    train_iter = iter(dataset)
-    
+    train_iter = (shard_batch(batch) for batch in dataset)
+        
+    step = 1
+    while step <= cfg.steps:
+        batch = next(train_iter)
+        with jax.profiler.StepTraceAnnotation("train", step_num=step):
+            loss, grad_norm = cached_train_step(batch)
+        metrics.update(loss=loss, grad_norm=grad_norm)
+        step += 1
+
     tokens_per_batch = cfg.optimizer.batch_size * cfg.train_data.max_length
     step = 1
     micro_step = 0
@@ -127,7 +149,7 @@ def train(cfg: ExperimentConfig):
         if micro_step == cfg.start_trace_micro_step:
             jax.profiler.start_trace(cfg.trace_dir, profiler_options=profiler_options)
         
-        batch = shard_batch(next(train_iter))
+        batch = next(train_iter)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
             loss, grad_norm = cached_train_step(batch)
         metrics.update(loss=loss, grad_norm=grad_norm)
@@ -158,11 +180,18 @@ def train(cfg: ExperimentConfig):
             metrics.reset()
 
             if step % cfg.generate_every == 0:
-                sample = generate(model, tokenizer, "What is the meaning of life?", 64)
-                print(f"step: {step}, sample: {sample}")
-                wandb.log({"sample": sample}, step=step)
+                for prompt in [
+                    "What is the meaning of life?",
+                    "Hello, I'm a language model",
+                    "5+7=",
+                    "What is the capital of France?",
+                ]:
+                    samples = generate(model, tokenizer, prompt, 128, n_samples=10, top_k=50, temperature=1.0)
+                    print(f"prompt: {prompt}")
+                    for i, sample in enumerate(samples):
+                        print(f"sample {i}: {sample}")
+                    wandb.log({"prompt": prompt, "sample": samples}, step=step)
             
-
             if step > 0 and step % cfg.save_every == 0:
                 _, state = nnx.split(model)
                 ckpt_mngr.save(step, metrics=log_stats['loss'].item(), args=ocp.args.StandardSave(state))

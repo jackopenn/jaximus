@@ -88,7 +88,7 @@ class Attention(nnx.Module):
             k = apply_rope(k, positions, base_frequency=self.rope_theta)
 
         with jax.profiler.TraceAnnotation("attention"):
-            att = jax.nn.dot_product_attention(query=q, key=k, value=v, is_causal=True, implementation="cudnn")
+            att = jax.nn.dot_product_attention(query=q, key=k, value=v, is_causal=True, implementation="cudnn" if jax.default_backend() == "gpu" else "xla")
 
         return self.o_proj(att.reshape(B, S, -1))
     

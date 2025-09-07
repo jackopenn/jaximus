@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable
 from data.dummy import get_dummy_dataset
-from data.hf import get_hf_dataset, get_hf_dataset_old
+from data.hf import get_hf_dataset
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
 from modelling.models.llama import Llama, LlamaConfig
