@@ -18,14 +18,13 @@ import wandb
 import orbax.checkpoint as ocp
 
 @partial(jax.jit, static_argnames=["max_length", "top_k", "temperature"])
-def sample(model, tokens, max_length=128, top_k=50, temperature=1.0):
+def sample(model, tokens, max_length=64, top_k=50, temperature=1.0):
     for _ in range(max_length):
         logits = model(tokens)
         logits = logits[:, -1, :] / temperature
         values, indices = jax.lax.top_k(logits, k=top_k)
-        # logits = logits.at[:, indices].set(-jnp.inf)
         logits = jnp.where(logits < values[:, -1][:, jnp.newaxis], -jnp.inf, logits)
-        next_token = jax.random.categorical(jax.random.PRNGKey(0), logits, shape=(n_samples,))
+        next_token = jax.random.categorical(jax.random.PRNGKey(0), logits)
         tokens = jnp.concatenate([tokens, next_token.reshape(-1, 1)], axis=1)
     return tokens
 
@@ -170,14 +169,14 @@ def train(cfg: ExperimentConfig):
             
             metrics.reset()
 
-            if step % cfg.generate_every == 0:
+            if step == 1 or step % cfg.generate_every == 0:
                 for prompt in [
                     "What is the meaning of life?",
                     "Hello, I'm a language model",
                     "5+7=",
                     "What is the capital of France?",
                 ]:
-                    samples = generate(model, tokenizer, prompt, max_length=128, n_samples=10, top_k=50, temperature=1.0)
+                    samples = generate(model, tokenizer, prompt, max_length=8, n_samples=5, top_k=50, temperature=1.0)
                     print(f"prompt: {prompt}")
                     for i, sample in enumerate(samples):
                         print(f"sample {i}: {sample}")
