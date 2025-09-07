@@ -1,9 +1,13 @@
+import jax
 from datasets import load_dataset
 from transformers import AutoTokenizer
 import grain
 from typing import List, Callable, Iterator, Any
 import numpy as np
 import os
+from torch.utils.data import DataLoader, default_collate
+import tensorflow as tf
+tf.config.set_visible_devices([], device_type='GPU')
 
 class HFStreamingDataSource(grain.sources.RandomAccessDataSource):
     def __init__(self, iterable_ds):
@@ -70,29 +74,63 @@ def get_hf_dataset(
         input_columns=["text"],
         remove_columns=hf_ds.column_names,
         batched=True,
+        # batch_size=batch_size,
     )
 
-    source = HFStreamingDataSource(hf_ds)
+    # source = HFStreamingDataSource(hf_ds)
 
-    sampler = grain.samplers.IndexSampler(
-        num_records=len(source),
-        shuffle=False,
-        seed=0,
+    # sampler = grain.samplers.IndexSampler(
+    #     num_records=len(source),
+    #     shuffle=False,
+    #     seed=0,
+    # )
+
+
+    # operations = []
+    # operations.append(GetInputAndTarget())
+    # operations.append(grain.transforms.Batch(batch_size))
+
+    # data_loader = grain.DataLoader(
+    #     data_source=source,
+    #     sampler=sampler,
+    #     operations=operations,
+    #     # worker_count=1,
+    #     worker_buffer_size=1,
+    #     read_options=grain.ReadOptions(num_threads=1, prefetch_buffer_size=1024),
+    #     enable_profiling=True,
+    # )
+    # cpu_buffer_size = 8
+    # data_loader = (
+    #     grain.MapDataset.source(source)
+    #     .to_iter_dataset(read_options=grain.ReadOptions(num_threads=1, prefetch_buffer_size=1024))
+    #     .map(GetInputAndTarget())
+    #     .batch(batch_size)
+    # )
+    # data_loader = (
+    #     grain.experimental.ThreadPrefetchIterDataset(
+    #         parent=data_loader,
+    #         prefetch_buffer_size=cpu_buffer_size,
+    #     )
+    # )
+    # def numpy_collate(batch):
+    #     batch = jax.tree_util.tree_map(np.asarray, default_collate(batch))
+    #     return (batch['input_ids'][:,:-1], batch['input_ids'][:,1:])
+
+    
+    
+    # data_loader = DataLoader(hf_ds, batch_size=batch_size, collate_fn=numpy_collate, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+
+    data_loader = (
+        tf.data.Dataset.from_generator(
+            lambda: hf_ds,
+            output_signature={"input_ids": tf.TensorSpec(shape=(sequence_length+1,), dtype=tf.int32)},
+        )
+        .batch(batch_size)
+        .map(lambda x: (x['input_ids'][:, :-1], x['input_ids'][:, 1:]), num_parallel_calls=tf.data.AUTOTUNE)
+        .prefetch(tf.data.AUTOTUNE)
+        .as_numpy_iterator()
     )
-
-
-    operations = []
-    operations.append(GetInputAndTarget())
-    operations.append(grain.transforms.Batch(batch_size))
-
-    data_loader = grain.DataLoader(
-        data_source=source,
-        sampler=sampler,
-        operations=operations,
-        worker_count=0,
-        read_options=grain.ReadOptions(num_threads=1, prefetch_buffer_size=128),
-    )
-
+    # data_loader = data_loader.batch(batch_size)
     return tokenizer, data_loader
 
 

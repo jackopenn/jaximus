@@ -34,10 +34,9 @@ model_config = LlamaConfig(
 
 # train_data = DummyDataConfig(
 train_data = HFDataConfig(
-     source="hf",
-     hf_name=["allenai/c4", "realnewslike"],
-     tokenizer_name="gpt2",
-    #  source="dummy",
+    source="hf",
+    hf_name=["HuggingFaceFW/fineweb-edu", "sample-10BT"],
+    tokenizer_name="gpt2",
     max_length=4096,
 )
 
@@ -46,7 +45,7 @@ optim_config = OptimizerConfig(
     weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=1,
+    batch_size=16,
     accum_steps=1,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
@@ -59,7 +58,7 @@ optim_config = OptimizerConfig(
 
 
 parallel_config = ParallelConfig(
-    data_parallel=1,
+    data_parallel=8,
 )
 
 exp_config = ExperimentConfig(
@@ -71,15 +70,15 @@ exp_config = ExperimentConfig(
     train_data=train_data,
     val_data=None,
     steps=100,
-    log_every=50,
+    log_every=1,
     generate_every=10000,
     eval_every=-1,
     save_every=1_0000,
     save_dir="checkpoints",
     trace_dir="traces",
-    start_trace_step=10,
-    end_trace_step=20,
-    gpu="H100",
+    start_trace_micro_step=10,
+    end_trace_micro_step=20,
+    gpu="A100",
 )
 
 from train import train

@@ -1,6 +1,6 @@
 import os
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.98"
 os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "true"
 
 from dataclasses import dataclass, field
@@ -36,7 +36,7 @@ model_config = GPTConfig(
 
 train_data = HFDataConfig(
     source="hf",
-    hf_name=["HuggingFaceFW/fineweb-edu"],
+    hf_name=["HuggingFaceFW/fineweb-edu", "sample-10BT"],
     tokenizer_name="gpt2",
     max_length=sequence_length,
 )
@@ -47,8 +47,8 @@ optim_config = OptimizerConfig(
     weight_decay=0.1,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=128,
-    accum_steps=4,
+    batch_size=64*8,
+    accum_steps=1,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,
@@ -60,7 +60,7 @@ optim_config = OptimizerConfig(
 
 
 parallel_config = ParallelConfig(
-    data_parallel=1,
+    data_parallel=8,
 )
 
 exp_config = ExperimentConfig(
@@ -72,15 +72,15 @@ exp_config = ExperimentConfig(
     train_data=train_data,
     val_data=None,
     steps=max_steps,
-    log_every=1,
-    generate_every=1000,
+    log_every=10,
+    generate_every=10000,
     eval_every=-1,
     save_every=5000,
     save_dir="checkpoints",
     trace_dir="traces",
     start_trace_micro_step=10,
     end_trace_micro_step=20,
-    gpu="H100",
+    gpu="A100",
 )
 
 from train import train

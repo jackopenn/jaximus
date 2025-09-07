@@ -21,11 +21,11 @@ class MLP(nnx.Module):
     
 
 class GLU(nnx.Module):
-    def __init__(self, hidden_dim: int, intermediate_dim: int, act_fn: Callable, use_bias: bool, rngs: jnp.ndarray, dtype: jnp.dtype):
+    def __init__(self, hidden_dim: int, intermediate_dim: int, act_fn: Callable, use_bias: bool, rngs: jnp.ndarray, dtype: jnp.dtype, kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(), bias_init: nnx.Initializer = nnx.initializers.zeros_init(), proj_init: nnx.Initializer = nnx.initializers.lecun_normal()):
         super().__init__()
-        self.up_proj = nnx.Linear(hidden_dim, intermediate_dim, use_bias=use_bias, dtype=dtype, rngs=rngs)
-        self.gate_proj = nnx.Linear(hidden_dim, intermediate_dim, use_bias=use_bias, dtype=dtype, rngs=rngs)
-        self.down_proj = nnx.Linear(intermediate_dim, hidden_dim, use_bias=use_bias, dtype=dtype, rngs=rngs)
+        self.up_proj = nnx.Linear(hidden_dim, intermediate_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init)
+        self.gate_proj = nnx.Linear(hidden_dim, intermediate_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init)
+        self.down_proj = nnx.Linear(intermediate_dim, hidden_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=proj_init, bias_init=bias_init)
         self.act_fn = act_fn
 
     def __call__(self, x):
@@ -41,11 +41,11 @@ class Attention(nnx.Module):
         rope_theta: int | None, 
         qk_norm: bool,
         use_bias: bool,
-        kernel_init: nnx.Initializer,
-        bias_init: nnx.Initializer,
-        proj_init: nnx.Initializer,
         dtype: jnp.dtype, 
-        rngs: jnp.ndarray
+        rngs: jnp.ndarray,
+        kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
+        bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
+        proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
