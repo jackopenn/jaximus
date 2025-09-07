@@ -81,8 +81,9 @@ def train(cfg: ExperimentConfig):
     @nnx.jit
     def train_step(model, optimizer, batch):
         loss, grads = jax.value_and_grad(loss_fn)(model, batch)
+        grad_norm = jnp.sqrt(sum(jnp.sum(jnp.abs(x)**2) for x in jax.tree.leaves(grads)))
         optimizer.update(model, grads)
-        return loss
+        return loss, grad_norm
 
 
     nparams, nflops_per_token = get_nparams_and_flops(model)
@@ -100,7 +101,8 @@ def train(cfg: ExperimentConfig):
     ckpt_mngr = ocp.CheckpointManager(ckpt_dir, options=ckpt_options)
 
     metrics = nnx.MultiMetric(
-        loss=nnx.metrics.Average("loss")
+        loss=nnx.metrics.Average("loss"),
+        grad_norm=nnx.metrics.Average("grad_norm")
     )
 
     wandb.init(
@@ -127,8 +129,8 @@ def train(cfg: ExperimentConfig):
         
         batch = shard_batch(next(train_iter))
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
-            loss = cached_train_step(batch)
-        metrics.update(loss=loss)
+            loss, grad_norm = cached_train_step(batch)
+        metrics.update(loss=loss, grad_norm=grad_norm)
 
         if micro_step == cfg.end_trace_micro_step:
             jax.profiler.stop_trace()
