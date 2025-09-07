@@ -36,7 +36,7 @@ model_config = GPTConfig(
 
 train_data = HFDataConfig(
     source="hf",
-    hf_name=["HuggingFaceFW/fineweb-edu", "sample-10BT"],
+    hf_name=["HuggingFaceFW/fineweb-edu"],
     tokenizer_name="gpt2",
     max_length=sequence_length,
 )
@@ -49,6 +49,7 @@ optim_config = OptimizerConfig(
     grad_clip=1.0,
     batch_size=64*8,
     accum_steps=1,
+    eps=1e-8,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,

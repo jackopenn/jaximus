@@ -17,13 +17,14 @@ import wandb
 
 import orbax.checkpoint as ocp
 
-@partial(jax.jit, static_argnames=["n_samples", "top_k", "temperature"])
-def sample(model, tokens, n_samples=1, top_k=50, temperature=1.0):
-    for _ in range(n_samples):
+@partial(jax.jit, static_argnames=["max_length", "top_k", "temperature"])
+def sample(model, tokens, max_length=128, top_k=50, temperature=1.0):
+    for _ in range(max_length):
         logits = model(tokens)
         logits = logits[:, -1, :] / temperature
-        _, indices = jax.lax.top_k(logits, k=top_k)
-        logits = logits.at[:, indices].set(-jnp.inf)
+        values, indices = jax.lax.top_k(logits, k=top_k)
+        # logits = logits.at[:, indices].set(-jnp.inf)
+        logits = jnp.where(logits < values[:, -1][:, jnp.newaxis], -jnp.inf, logits)
         next_token = jax.random.categorical(jax.random.PRNGKey(0), logits, shape=(n_samples,))
         tokens = jnp.concatenate([tokens, next_token.reshape(-1, 1)], axis=1)
     return tokens
@@ -34,7 +35,7 @@ def generate(model, tokenizer, prompt, max_length, n_samples=1, top_k=50, temper
     x = jnp.stack(jnp.concatenate([jnp.array([tokenizer.bos_token_id]), x]))
     x = jnp.stack([x for _ in range(n_samples)])
     
-    x = sample(model, x, n_samples, top_k, temperature)
+    x = sample(model, x, max_length, top_k, temperature)
 
     return tokenizer.batch_decode(x[:, 1:])
 
@@ -85,7 +86,7 @@ def train(cfg: ExperimentConfig):
         x, y = batch
         logits = model(x)
         loss = optax.softmax_cross_entropy_with_integer_labels(
-            logits.reshape(-1, logits.shape[-1]),
+            logits.reshape(-1, logits.shape[-1]).astype(jnp.float32),
             y.reshape(-1)
         ).mean()
         return loss

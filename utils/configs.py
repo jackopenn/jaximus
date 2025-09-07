@@ -17,6 +17,7 @@ class OptimizerConfig:
     batch_size: int
     accum_steps: int
     lr: float | Callable
+    eps: float
 
 
 @chz.chz

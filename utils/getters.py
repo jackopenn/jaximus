@@ -49,6 +49,7 @@ def get_optimizer(model, config: OptimizerConfig):
                     mask=lambda params: jax.tree.map(lambda x: x.ndim != 1, params), # only wd for 2d tensors
                     b1=config.betas[0],
                     b2=config.betas[1],
+                    eps=config.eps,
                 )
             ),
             every_k_schedule=config.accum_steps,
