@@ -23,8 +23,6 @@ def sample(model, tokens, n_samples=1, top_k=50, temperature=1.0):
         logits = model(tokens)
         logits = logits[:, -1, :] / temperature
         _, indices = jax.lax.top_k(logits, k=top_k)
-        # logits[:, indices] = -jnp.inf
-        # print(logits.shape, indices.shape)
         logits = logits.at[:, indices].set(-jnp.inf)
         next_token = jax.random.categorical(jax.random.PRNGKey(0), logits, shape=(n_samples,))
         tokens = jnp.concatenate([tokens, next_token.reshape(-1, 1)], axis=1)
@@ -128,14 +126,6 @@ def train(cfg: ExperimentConfig):
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     train_iter = (shard_batch(batch) for batch in dataset)
-        
-    step = 1
-    while step <= cfg.steps:
-        batch = next(train_iter)
-        with jax.profiler.StepTraceAnnotation("train", step_num=step):
-            loss, grad_norm = cached_train_step(batch)
-        metrics.update(loss=loss, grad_norm=grad_norm)
-        step += 1
 
     tokens_per_batch = cfg.optimizer.batch_size * cfg.train_data.max_length
     step = 1
