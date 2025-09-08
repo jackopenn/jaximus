@@ -55,8 +55,8 @@ class GPTLayer(nnx.Module):
         self.mlp = MLP(hidden_dim, intermediate_dim, act_fn, use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init, proj_init=proj_init)
         self.ln_2 = nnx.LayerNorm(num_features=hidden_dim, use_bias=use_bias, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
 
-    def __call__(self, x: jnp.ndarray, attention_mask: jnp.ndarray) -> jnp.ndarray:
-        x = x + self.attention(self.ln_1(x), mask=attention_mask)
+    def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
+        x = x + self.attention(self.ln_1(x), mask=mask)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -79,7 +79,7 @@ class GPT(nnx.Module):
             embedding_init=kernel_init,
             rngs=rngs,
         )
-        self.pos_embed = nnx.Embed(
+        self.pos_embedding = nnx.Embed(
             num_embeddings=config.max_seq_len,
             features=config.hidden_dim,
             dtype=config.dtype,
@@ -111,13 +111,11 @@ class GPT(nnx.Module):
             rngs=rngs,
         )
 
-    def __call__(self, input_ids: jnp.ndarray, attention_mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        if attention_mask is None:
-            attention_mask = nnx.make_causal_mask(input_ids)
+    def __call__(self, input_ids: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
         x = self.token_embedding(input_ids)
-        x = x + self.pos_embed(jnp.arange(input_ids.shape[1]))
+        x = x + self.pos_embedding(jnp.arange(input_ids.shape[1]))
         for layer in self.layers:
-            x = layer(x, attention_mask)
+            x = layer(x, mask)
         x = self.ln_f(x)
         return self.token_embedding.attend(x)
     

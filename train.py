@@ -5,6 +5,7 @@ from functools import partial
 from utils.common import get_gpu_peak_flops, get_nparams_and_flops, pretty_log
 from utils.getters import get_dataset, get_model, get_optimizer
 from utils.configs import ExperimentConfig
+from generate import generate
 
 import jax
 from jax import numpy as jnp
@@ -16,28 +17,7 @@ import optax
 import wandb
 
 import orbax.checkpoint as ocp
-
-@partial(jax.jit, static_argnames=["max_length", "top_k", "temperature"])
-def sample(model, tokens, max_length=64, top_k=50, temperature=1.0):
-    for _ in range(max_length):
-        logits = model(tokens)
-        logits = logits[:, -1, :] / temperature
-        values, indices = jax.lax.top_k(logits, k=top_k)
-        logits = jnp.where(logits < values[:, -1][:, jnp.newaxis], -jnp.inf, logits)
-        next_token = jax.random.categorical(jax.random.PRNGKey(0), logits)
-        tokens = jnp.concatenate([tokens, next_token.reshape(-1, 1)], axis=1)
-    return tokens
-
-
-def generate(model, tokenizer, prompt, max_length, n_samples=1, top_k=50, temperature=1.0):
-    x = tokenizer.encode(prompt, return_tensors="np")[0]
-    x = jnp.stack(jnp.concatenate([jnp.array([tokenizer.bos_token_id]), x]))
-    x = jnp.stack([x for _ in range(n_samples)])
-    
-    x = sample(model, x, max_length, top_k, temperature)
-
-    return tokenizer.batch_decode(x[:, 1:])
-
+import re
 
 def train(cfg: ExperimentConfig):
     profiler_options = jax.profiler.ProfileOptions()
@@ -170,17 +150,25 @@ def train(cfg: ExperimentConfig):
             metrics.reset()
 
             if step == 1 or step % cfg.generate_every == 0:
-                for prompt in [
-                    "What is the meaning of life?",
+                
+                prompts = [
+                    "The meaning of life is",
                     "Hello, I'm a language model",
                     "5+7=",
-                    "What is the capital of France?",
-                ]:
-                    samples = generate(model, tokenizer, prompt, max_length=8, n_samples=5, top_k=50, temperature=1.0)
+                    "five plus seven is",
+                    "The capital of France is",
+                    "The answer to the ultimate question of life, the universe, and everything is",
+                    "Once upon a time, there was a",
+                ]
+                
+                samples = generate(model, tokenizer, prompts, max_length=64, n_samples=5, top_k=50, temperature=1.0)
+                for prompt, samples_list in samples.items():
                     print(f"prompt: {prompt}")
-                    for i, sample in enumerate(samples):
-                        print(f"sample {i}: {sample}")
-                    wandb.log({"prompt": prompt, "sample": samples}, step=step)
+                    for i, sample in enumerate(samples_list):
+                        clean = re.sub(r'^(?:<\|endoftext\|>)+', '', sample)
+                        print(f"sample {i}: {clean}")
+                    print()
+                wandb.log(samples, step=step)
             
             if step > 0 and step % cfg.save_every == 0:
                 _, state = nnx.split(model)

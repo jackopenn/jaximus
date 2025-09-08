@@ -32,6 +32,11 @@ def get_nparams_and_flops(model):
     nparams = sum(x.size for x in jax.tree_util.tree_leaves(params))
     embed_params = model.token_embedding.embedding.size
 
+    try:
+        embed_params += model.pos_embedding.embedding.size
+    except:
+        pass
+
     l, h, q, t = (
         model.config.num_layers,
         model.config.num_attention_heads,

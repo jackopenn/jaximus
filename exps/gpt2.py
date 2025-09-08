@@ -56,7 +56,7 @@ optim_config = OptimizerConfig(
     weight_decay=0.1,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=64*8,
+    batch_size=1,
     accum_steps=1,
     eps=1e-8,
     lr=optax.warmup_cosine_decay_schedule(
@@ -70,7 +70,7 @@ optim_config = OptimizerConfig(
 
 
 parallel_config = ParallelConfig(
-    data_parallel=8,
+    data_parallel=1,
 )
 
 exp_config = ExperimentConfig(

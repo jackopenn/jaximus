@@ -67,7 +67,7 @@ class Attention(nnx.Module):
             self.q_norm = nnx.RMSNorm(head_dim, dtype=jnp.float32, rngs=rngs)
             self.k_norm = nnx.RMSNorm(head_dim, dtype=jnp.float32, rngs=rngs)
 
-    def __call__(self, x: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
         B, S, D = x.shape
 
         q = self.q_proj(x)
@@ -87,8 +87,16 @@ class Attention(nnx.Module):
             q = apply_rope(q, positions, base_frequency=self.rope_theta)
             k = apply_rope(k, positions, base_frequency=self.rope_theta)
 
-        with jax.profiler.TraceAnnotation("attention"):
-            att = jax.nn.dot_product_attention(query=q, key=k, value=v, is_causal=True, implementation="cudnn" if jax.default_backend() == "gpu" else "xla")
+        if mask is not None:
+            mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
+
+        with jax.profiler.TraceAnnotation("attention"): # this does not work :/
+            att = jax.nn.dot_product_attention(
+                query=q, key=k, value=v,
+                is_causal=True,
+                implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
+                mask=mask
+            )
 
         return self.o_proj(att.reshape(B, S, -1))
     
