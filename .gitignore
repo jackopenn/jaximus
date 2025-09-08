@@ -3,3 +3,5 @@ wandb/
 .venv/
 checkpoints/
 traces/
+artifacts/
+uv.lock
