@@ -56,10 +56,8 @@ class GPTLayer(nnx.Module):
         self.ln_2 = nnx.LayerNorm(num_features=hidden_dim, use_bias=use_bias, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, attention_mask: jnp.ndarray) -> jnp.ndarray:
-        x = x + self.attention(x, mask=attention_mask)
-        x = self.ln_1(x)
-        x = x + self.mlp(x)
-        x = self.ln_2(x)
+        x = x + self.attention(self.ln_1(x), mask=attention_mask)
+        x = x + self.mlp(self.ln_2(x))
         return x
 
 
