@@ -60,6 +60,8 @@ def get_hf_dataset(
 
     def tokenize_and_group_texts(texts):
         tokenized_batch = tokenizer(texts, return_attention_mask=False, return_token_type_ids=False, return_tensors="np")
+        # prepend bos token
+        tokenized_batch['input_ids'] = np.concatenate([np.array([tokenizer.bos_token_id]), tokenized_batch['input_ids']], axis=1)
         grouped_batch = group_texts(tokenized_batch)
         return grouped_batch
 

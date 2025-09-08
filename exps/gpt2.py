@@ -26,7 +26,7 @@ from modelling.models.gpt import GPTConfig
 
 sequence_length = 1024
 
-max_steps = 20_000
+max_steps = 100_000
 warmup_steps = 700
 
 model_config = GPTConfig(
@@ -56,7 +56,7 @@ optim_config = OptimizerConfig(
     weight_decay=0.1,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=1,
+    batch_size=64*8,
     accum_steps=1,
     eps=1e-8,
     lr=optax.warmup_cosine_decay_schedule(
@@ -70,7 +70,7 @@ optim_config = OptimizerConfig(
 
 
 parallel_config = ParallelConfig(
-    data_parallel=1,
+    data_parallel=8,
 )
 
 exp_config = ExperimentConfig(
@@ -85,7 +85,7 @@ exp_config = ExperimentConfig(
     log_every=1,
     generate_every=500,
     eval_every=-1,
-    save_every=2000,
+    save_every=5000,
     save_dir="checkpoints",
     trace_dir="traces",
     start_trace_micro_step=10,
