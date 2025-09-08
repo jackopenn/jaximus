@@ -2,15 +2,15 @@ import os
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.98"
 os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "false"
-os.environ["NCCL_DEBUG"] = "INFO"
+# os.environ["NCCL_DEBUG"] = "INFO"
 
 # Critical P2P memory reductions
-os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
-os.environ["NCCL_NTHREADS"] = "2"              # Reduce NCCL worker threads  
-os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
-os.environ["NCCL_MIN_NCHANNELS"] = "2"         # Force minimal channels
-os.environ["NCCL_P2P_DISABLE"] = "0"           # Keep P2P but reduce memory
-os.environ["NCCL_SHM_DISABLE"] = "1"   
+# os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
+# os.environ["NCCL_NTHREADS"] = "2"              # Reduce NCCL worker threads  
+# os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
+# os.environ["NCCL_MIN_NCHANNELS"] = "2"         # Force minimal channels
+# os.environ["NCCL_P2P_DISABLE"] = "0"           # Keep P2P but reduce memory
+# os.environ["NCCL_SHM_DISABLE"] = "1"   
 
 from dataclasses import dataclass, field
 from typing import Callable
@@ -56,7 +56,7 @@ optim_config = OptimizerConfig(
     weight_decay=0.1,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=64*8,
+    batch_size=1,
     accum_steps=1,
     eps=1e-8,
     lr=optax.warmup_cosine_decay_schedule(
@@ -70,7 +70,7 @@ optim_config = OptimizerConfig(
 
 
 parallel_config = ParallelConfig(
-    data_parallel=8,
+    data_parallel=1,
 )
 
 exp_config = ExperimentConfig(
