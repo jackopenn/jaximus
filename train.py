@@ -27,9 +27,9 @@ def train(cfg: ExperimentConfig):
     assert cfg.generate_every % cfg.log_every == 0, (
         f"generate_every must be a multiple of log_every for accurate timing :)"
     )
-    # assert cfg.eval_every % cfg.log_every == 0, (
-    #     f"eval_every must be a multiple of log_every"
-    # )
+    assert cfg.eval_every % cfg.log_every == 0, (
+        f"eval_every must be a multiple of log_every"
+    )
     assert cfg.save_every % cfg.log_every == 0, (
         f"save_every must be a multiple of log_every"
     )
@@ -71,11 +71,12 @@ def train(cfg: ExperimentConfig):
         return loss
     
     @nnx.jit
-    def train_step(model, optimizer, batch):
+    def train_step(model, optimizer, batch, metrics):
         loss, grads = jax.value_and_grad(loss_fn)(model, batch)
-        grad_norm = jnp.sqrt(sum(jnp.sum(jnp.abs(x)**2) for x in jax.tree.leaves(grads)))
         optimizer.update(model, grads)
-        return loss, grad_norm
+        grad_norm = jnp.sqrt(sum(jnp.sum(jnp.abs(x)**2) for x in jax.tree.leaves(grads)))
+        metrics.update(loss=loss, grad_norm=grad_norm)
+        return loss, metrics
 
 
     nparams, nflops_per_token = get_nparams_and_flops(model)
@@ -103,7 +104,7 @@ def train(cfg: ExperimentConfig):
     )
 
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
-    cached_train_step = nnx.cached_partial(train_step, model, optimizer)
+    cached_train_step = nnx.cached_partial(train_step, model, optimizer, metrics)
 
     train_iter = (shard_batch(batch) for batch in dataset)
 
@@ -121,8 +122,7 @@ def train(cfg: ExperimentConfig):
         
         batch = next(train_iter)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
-            loss, grad_norm = cached_train_step(batch)
-        metrics.update(loss=loss, grad_norm=grad_norm)
+            loss, metrics = cached_train_step(batch, metrics)
 
         if micro_step == cfg.end_trace_micro_step:
             jax.profiler.stop_trace()
