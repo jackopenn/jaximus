@@ -5,6 +5,7 @@ from functools import partial
 from utils.common import get_gpu_peak_flops, get_nparams_and_flops, pretty_log
 from utils.getters import get_dataset, get_model, get_optimizer
 from utils.configs import ExperimentConfig
+from utils.metric_logger import MetricLogger
 from generate import generate
 from transformers import AutoTokenizer
 import jax
@@ -19,19 +20,17 @@ import wandb
 import orbax.checkpoint as ocp
 import re
 
+def pretty_print_samples(samples):
+    for prompt, samples_list in samples.items():
+        print(f"prompt: {prompt}")
+        for i, sample in enumerate(samples_list):
+            clean = re.sub(r'^(?:<\|endoftext\|>)+', '', sample)
+            print(f"sample {i}: {clean}")
+        print()
+
 def train(cfg: ExperimentConfig):
     profiler_options = jax.profiler.ProfileOptions()
     profiler_options.host_tracer_level = 3
-
-    assert cfg.generate_every % cfg.log_every == 0, (
-        f"generate_every must be a multiple of log_every for accurate timing :)"
-    )
-    # assert cfg.eval_every % cfg.log_every == 0, (
-    #     f"eval_every must be a multiple of log_every"
-    # )
-    assert cfg.save_every % cfg.log_every == 0, (
-        f"save_every must be a multiple of log_every"
-    )
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.train_data.tokenizer_name)
     dataset = get_dataset(cfg.train_data, cfg.optimizer.batch_size)
@@ -72,12 +71,11 @@ def train(cfg: ExperimentConfig):
     
 
     @nnx.jit
-    def train_step(model, optimizer, batch, metrics):
+    def train_step(model, optimizer, batch):
         loss, grads = jax.value_and_grad(loss_fn)(model, batch)
         optimizer.update(model, grads)
         grad_norm = jnp.sqrt(sum(jnp.sum(jnp.abs(x)**2) for x in jax.tree.leaves(grads)))
-        metrics.update(loss=loss, grad_norm=grad_norm)
-        return loss, metrics
+        return loss, grad_norm
 
 
     nparams, nflops_per_token = get_nparams_and_flops(model)
@@ -94,14 +92,20 @@ def train(cfg: ExperimentConfig):
     )
     ckpt_mngr = ocp.CheckpointManager(ckpt_dir, options=ckpt_options)
 
-    metrics = nnx.MultiMetric(
-        loss=nnx.metrics.Average("loss"),
-        grad_norm=nnx.metrics.Average("grad_norm")
-    )
 
     wandb.init(
         project="transformers",
         config=cfg,
+    )
+
+    train_logger = MetricLogger(
+        batch_size=cfg.optimizer.batch_size,
+        accum_steps=cfg.optimizer.accum_steps,
+        sequence_length=cfg.train_data.max_length,
+        n_flops_per_token=nflops_per_token,
+        gpu_name=cfg.gpu,
+        optimizer_scheduler=cfg.optimizer.lr,
+        wandb=wandb,
     )
 
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
@@ -109,78 +113,45 @@ def train(cfg: ExperimentConfig):
 
     train_iter = (shard_batch(batch) for batch in dataset)
 
-    tokens_per_batch = cfg.optimizer.batch_size * cfg.train_data.max_length
     step = 1
     micro_step = 0
-    tokens_consumed = 0
-    gpus_peak_flops = get_gpu_peak_flops(cfg.gpu) * cfg.parallel.data_parallel
-
-    batch = next(train_iter)
     t0 = time.time()
+    
     while step <= cfg.steps:
-        
+
         if micro_step == cfg.start_trace_micro_step:
             jax.profiler.start_trace(cfg.trace_dir, profiler_options=profiler_options)
         
-        # batch = next(train_iter)
+        batch = next(train_iter)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
-            loss, metrics = cached_train_step(batch, metrics)
+            loss, grad_norm = cached_train_step(batch)
 
         if micro_step == cfg.end_trace_micro_step:
             jax.profiler.stop_trace()
 
-        tokens_consumed += tokens_per_batch
         micro_step += 1
 
-        if (step == 1 or step % cfg.log_every == 0) and micro_step % cfg.optimizer.accum_steps == 0:
-            loss.block_until_ready()
-            t1 = time.time()
-            
-            step_time = (t1 - t0) / (cfg.log_every * cfg.optimizer.accum_steps if step > 1 else cfg.optimizer.accum_steps)
-
-            log_stats = metrics.compute()
-            log_stats["step_time"] = step_time
-            log_stats["tokens_consumed"] = tokens_consumed
-            log_stats["tokens_per_second"] = tokens_per_batch / step_time
-            log_stats["tokens_per_second_per_device"] = log_stats["tokens_per_second"] / cfg.parallel.data_parallel
-            log_stats["mfu"] = ((nflops_per_token * log_stats["tokens_per_second"]) / gpus_peak_flops) * 100
-            log_stats["lr"] = cfg.optimizer.lr if isinstance(cfg.optimizer.lr, float) else cfg.optimizer.lr(step)
-
-            pretty_log(step, log_stats)
-            wandb.log(log_stats, step=step)
-            
-            metrics.reset()
-
-            if step == 1 or step % cfg.generate_every == 0:
-                
-                prompts = [
-                    "The meaning of life is",
-                    "Hello, I'm a language model",
-                    "5+7=",
-                    "five plus seven is",
-                    "The capital of France is",
-                    "The answer to the ultimate question of life, the universe, and everything is",
-                    "Once upon a time, there was a",
-                ]
-                
-                samples = generate(model, tokenizer, prompts, max_length=64, n_samples=5, top_k=50, temperature=1.0)
-                for prompt, samples_list in samples.items():
-                    print(f"prompt: {prompt}")
-                    for i, sample in enumerate(samples_list):
-                        clean = re.sub(r'^(?:<\|endoftext\|>)+', '', sample)
-                        print(f"sample {i}: {clean}")
-                    print()
-                wandb.log(samples, step=step)
-            
-            if step > 0 and step % cfg.save_every == 0:
-                _, state = nnx.split(model)
-                ckpt_mngr.save(step, metrics=log_stats['loss'].item(), args=ocp.args.StandardSave(state))
-                wandb.log_artifact(f"{ckpt_dir}/{step}", name=f"run_{wandb.run.id}_model", type="model", aliases=[f"step_{step}"])
-            
-            t0 = time.time()
-
         if micro_step % cfg.optimizer.accum_steps == 0:
+            step_time = time.time() - t0
+            train_logger.log({
+                "loss": loss,
+                "grad_norm": grad_norm,
+                "step_time": step_time,
+            })
+
+            if step > 1:
+                if step % cfg.generate_every == 0:
+                    samples = generate(model, tokenizer)
+                    pretty_print_samples(samples)
+            
+                if step % cfg.save_every == 0:
+                    _, state = nnx.split(model)
+                    ckpt_mngr.save(step, metrics=loss, args=ocp.args.StandardSave(state))
+                    wandb.log_artifact(f"{ckpt_dir}/{step}", name=f"run_{wandb.run.id}_model", type="model", aliases=[f"step_{step}"])
+
+            micro_step = 0
             step += 1
+            t0 = time.time()
             
 
 if __name__ == "__main__":

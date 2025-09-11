@@ -24,18 +24,18 @@ from utils.configs import OptimizerConfig, ExperimentConfig, ParallelConfig, HFD
 
 from modelling.models.gpt import GPTConfig
 
-sequence_length = 4096
+sequence_length = 1024
 
 max_steps = 60_000
 warmup_steps = 700
 
 model_config = GPTConfig(
     vocab_size=50304,
-    hidden_dim=2048,
-    num_layers=24,
-    num_attention_heads=16,
-    intermediate_dim=8192,
-    head_dim=128,
+    hidden_dim=768,
+    num_layers=12,
+    num_attention_heads=12,
+    intermediate_dim=3072,
+    head_dim=64,
     act_fn=nnx.gelu,
     max_seq_len=sequence_length,
     layer_norm_epsilon=1e-5,
@@ -62,7 +62,7 @@ optim_config = OptimizerConfig(
     weight_decay=0.1,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=2,
+    batch_size=1,
     accum_steps=1,
     eps=1e-8,
     lr=optax.warmup_cosine_decay_schedule(
@@ -88,7 +88,6 @@ exp_config = ExperimentConfig(
     train_data=train_data,
     val_data=None,
     steps=max_steps,
-    log_every=20,
     generate_every=500,
     eval_every=-1,
     save_every=5000,

@@ -36,7 +36,23 @@ def sample(model, batch, mask, prompt_length, sample_length, top_k, temperature,
     return batch
 
 
-def generate(model, tokenizer, prompts, max_length, n_samples, top_k, temperature):
+def generate(
+    model,
+    tokenizer,
+    prompts=[
+        "The meaning of life is",
+        "Hello, I'm a language model",
+        "5+7=",
+        "five plus seven is",
+        "The capital of France is",
+        "The answer to the ultimate question of life, the universe, and everything is",
+        "Once upon a time, there was a",
+    ],
+    max_length=64,
+    n_samples=5,
+    top_k=10,
+    temperature=1.0
+):
 
     if not tokenizer.pad_token:
         tokenizer.pad_token = tokenizer.bos_token

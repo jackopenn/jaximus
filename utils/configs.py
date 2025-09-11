@@ -55,7 +55,6 @@ class ExperimentConfig:
     train_data: DataConfig
     val_data: Optional[DataConfig]    
     steps: int
-    log_every: int
     generate_every: int
     eval_every: int
     save_every: int
