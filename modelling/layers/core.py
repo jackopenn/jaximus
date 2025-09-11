@@ -7,10 +7,37 @@ from modelling.layers.position import apply_rope
 
 
 class MLP(nnx.Module):
-    def __init__(self, hidden_dim: int, intermediate_dim: int, act_fn: Callable, use_bias: bool, rngs: jnp.ndarray, dtype: jnp.dtype, kernel_init: nnx.Initializer, bias_init: nnx.Initializer, proj_init: nnx.Initializer):
+    def __init__(
+        self,
+        hidden_dim: int,
+        intermediate_dim: int,
+        act_fn: Callable,
+        use_bias: bool,
+        rngs: jnp.ndarray,
+        dtype: jnp.dtype,
+        kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
+        bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
+        proj_init: nnx.Initializer = nnx.initializers.lecun_normal()
+    ):
         super().__init__()
-        self.up_proj = nnx.Linear(hidden_dim, intermediate_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init)
-        self.down_proj = nnx.Linear(intermediate_dim, hidden_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=proj_init, bias_init=bias_init)
+        self.up_proj = nnx.Linear(
+            hidden_dim,
+            intermediate_dim,
+            use_bias=use_bias,
+            dtype=dtype,
+            rngs=rngs,
+            kernel_init=kernel_init,
+            bias_init=bias_init
+        )
+        self.down_proj = nnx.Linear(
+            intermediate_dim,
+            hidden_dim,
+            use_bias=use_bias,
+            dtype=dtype,
+            rngs=rngs,
+            kernel_init=proj_init,
+            bias_init=bias_init
+        )
         self.act_fn = act_fn
 
     def __call__(self, x):
@@ -21,11 +48,46 @@ class MLP(nnx.Module):
     
 
 class GLU(nnx.Module):
-    def __init__(self, hidden_dim: int, intermediate_dim: int, act_fn: Callable, use_bias: bool, rngs: jnp.ndarray, dtype: jnp.dtype, kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(), bias_init: nnx.Initializer = nnx.initializers.zeros_init(), proj_init: nnx.Initializer = nnx.initializers.lecun_normal()):
+    def __init__(
+        self,
+        hidden_dim: int,
+        intermediate_dim: int,
+        act_fn: Callable,
+        use_bias: bool,
+        rngs: jnp.ndarray,
+        dtype: jnp.dtype,
+        kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
+        bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
+        proj_init: nnx.Initializer = nnx.initializers.lecun_normal()
+    ):
         super().__init__()
-        self.up_proj = nnx.Linear(hidden_dim, intermediate_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init)
-        self.gate_proj = nnx.Linear(hidden_dim, intermediate_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init)
-        self.down_proj = nnx.Linear(intermediate_dim, hidden_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=proj_init, bias_init=bias_init)
+        self.up_proj = nnx.Linear(
+            hidden_dim,
+            intermediate_dim,
+            use_bias=use_bias,
+            dtype=dtype,
+            rngs=rngs,
+            kernel_init=kernel_init,
+            bias_init=bias_init
+        )
+        self.gate_proj = nnx.Linear(
+            hidden_dim,
+            intermediate_dim,
+            use_bias=use_bias, 
+            dtype=dtype,
+            rngs=rngs,
+            kernel_init=kernel_init,
+            bias_init=bias_init
+        )
+        self.down_proj = nnx.Linear(
+            intermediate_dim,
+            hidden_dim,
+            use_bias=use_bias,
+            dtype=dtype,
+            rngs=rngs,
+            kernel_init=proj_init,
+            bias_init=bias_init
+        )
         self.act_fn = act_fn
 
     def __call__(self, x):
@@ -57,11 +119,42 @@ class Attention(nnx.Module):
         self.use_bias = use_bias
         self.dtype = dtype
 
-        self.q_proj = nnx.Linear(hidden_dim, num_attention_heads * head_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init)
-        self.k_proj = nnx.Linear(hidden_dim, num_key_value_heads * head_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init)
-        self.v_proj = nnx.Linear(hidden_dim, num_key_value_heads * head_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init)
+        self.q_proj = nnx.Linear(
+            hidden_dim,
+            num_attention_heads * head_dim,
+            use_bias=use_bias,
+            dtype=dtype, rngs=rngs,
+            kernel_init=kernel_init,
+            bias_init=bias_init
+        )
+        self.k_proj = nnx.Linear(
+            hidden_dim,
+            num_key_value_heads * head_dim,
+            use_bias=use_bias,
+            dtype=dtype,
+            rngs=rngs,
+            kernel_init=kernel_init,
+            bias_init=bias_init
+        )
+        self.v_proj = nnx.Linear(
+            hidden_dim,
+            num_key_value_heads * head_dim, 
+            use_bias=use_bias,
+            dtype=dtype, 
+            rngs=rngs,
+            kernel_init=kernel_init,
+            bias_init=bias_init
+        )
 
-        self.o_proj = nnx.Linear(num_attention_heads * head_dim, hidden_dim, use_bias=use_bias, dtype=dtype, rngs=rngs, kernel_init=proj_init, bias_init=bias_init)
+        self.o_proj = nnx.Linear(
+            num_attention_heads * head_dim,
+            hidden_dim,
+            use_bias=use_bias,
+            dtype=dtype,
+            rngs=rngs,
+            kernel_init=proj_init, 
+            bias_init=bias_init
+            )
 
         if self.qk_norm:
             self.q_norm = nnx.RMSNorm(head_dim, dtype=jnp.float32, rngs=rngs)
