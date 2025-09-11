@@ -1,8 +1,8 @@
 import grain
 import jax
-from grain_transforms import Tokenize, Shift
+from data.grain_transforms import Tokenize, Shift
 from datasets import load_dataset
-
+from transformers import AutoTokenizer
 
 class HFStreamingDataSource(grain.sources.RandomAccessDataSource):
     def __init__(self, iterable_ds):
@@ -26,7 +26,7 @@ def get_hf_dataset(
     hf_name,
     sequence_length,
     batch_size,
-    tokenizer=None,
+    tokenizer_name=None,
     streaming=True,
     num_proc=None,
 ):
@@ -50,7 +50,8 @@ def get_hf_dataset(
     )
 
     # if no tokenizer, assume already tokenized
-    if tokenizer:
+    if tokenizer_name:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         ds = ds.map(Tokenize(tokenizer, prepend_bos=True))
 
     ds = grain.experimental.ConcatThenSplitIterDataset(

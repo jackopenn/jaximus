@@ -1,7 +1,7 @@
 import os
 import jax
 import grain
-from grain_transforms import ParseArrayRecord, Tokenize, Shift
+from data.grain_transforms import ParseArrayRecord, Tokenize, Shift
 
 
 def get_array_record_dataset(

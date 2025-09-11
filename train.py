@@ -6,7 +6,7 @@ from utils.common import get_gpu_peak_flops, get_nparams_and_flops, pretty_log
 from utils.getters import get_dataset, get_model, get_optimizer
 from utils.configs import ExperimentConfig
 from generate import generate
-
+from transformers import AutoTokenizer
 import jax
 from jax import numpy as jnp
 from jax.sharding import Mesh, PartitionSpec, NamedSharding
@@ -26,9 +26,9 @@ def train(cfg: ExperimentConfig):
     assert cfg.generate_every % cfg.log_every == 0, (
         f"generate_every must be a multiple of log_every for accurate timing :)"
     )
-    assert cfg.eval_every % cfg.log_every == 0, (
-        f"eval_every must be a multiple of log_every"
-    )
+    # assert cfg.eval_every % cfg.log_every == 0, (
+    #     f"eval_every must be a multiple of log_every"
+    # )
     assert cfg.save_every % cfg.log_every == 0, (
         f"save_every must be a multiple of log_every"
     )
@@ -105,7 +105,7 @@ def train(cfg: ExperimentConfig):
     )
 
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
-    cached_train_step = nnx.cached_partial(train_step, model, optimizer, metrics)
+    cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     train_iter = (shard_batch(batch) for batch in dataset)
 
@@ -115,13 +115,14 @@ def train(cfg: ExperimentConfig):
     tokens_consumed = 0
     gpus_peak_flops = get_gpu_peak_flops(cfg.gpu) * cfg.parallel.data_parallel
 
+    batch = next(train_iter)
     t0 = time.time()
     while step <= cfg.steps:
         
         if micro_step == cfg.start_trace_micro_step:
             jax.profiler.start_trace(cfg.trace_dir, profiler_options=profiler_options)
         
-        batch = next(train_iter)
+        # batch = next(train_iter)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
             loss, metrics = cached_train_step(batch, metrics)
 

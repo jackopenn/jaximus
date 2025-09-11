@@ -1,4 +1,6 @@
 import grain
+import pickle
+import numpy as np
 
 class ParseArrayRecord(grain.transforms.Map):
   def map(self, x):

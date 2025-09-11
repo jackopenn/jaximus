@@ -2,10 +2,11 @@ from dataclasses import dataclass
 from typing import Callable
 from data.dummy import get_dummy_dataset
 from data.hf import get_hf_dataset
+from data.array_records import get_array_record_dataset
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
 from modelling.models.llama import Llama, LlamaConfig
-from utils.configs import DataConfig, ModelConfig, OptimizerConfig
+from utils.configs import DataConfig, ModelConfig, OptimizerConfig, HFDataConfig, DummyDataConfig, ArrayRecordDataConfig
 
 import optax
 import jax
