@@ -2,7 +2,7 @@ import time
 import os
 import chz
 from functools import partial
-from utils.common import get_gpu_peak_flops, get_nparams_and_flops, pretty_log
+from utils.common import get_gpu_peak_flops, get_nparams_and_flops
 from utils.getters import get_dataset, get_model, get_optimizer
 from utils.configs import ExperimentConfig
 from utils.metric_logger import MetricLogger
@@ -116,7 +116,7 @@ def train(cfg: ExperimentConfig):
     step = 1
     micro_step = 0
     t0 = time.time()
-    
+
     while step <= cfg.steps:
 
         if micro_step == cfg.start_trace_micro_step:

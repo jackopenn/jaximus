@@ -51,7 +51,12 @@ class GPTLayer(nnx.Module):
             proj_init=proj_init,
             rngs=rngs,
         )
-        self.ln_1 = nnx.LayerNorm(num_features=hidden_dim, use_bias=use_bias, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
+        self.ln_1 = nnx.LayerNorm(
+            num_features=hidden_dim,
+            use_bias=use_bias,
+            epsilon=layer_norm_epsilon,
+            dtype=jnp.float32, rngs=rngs
+        )
         self.mlp = MLP(hidden_dim, intermediate_dim, act_fn, use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init, proj_init=proj_init)
         self.ln_2 = nnx.LayerNorm(num_features=hidden_dim, use_bias=use_bias, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
 

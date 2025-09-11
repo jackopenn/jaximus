@@ -14,6 +14,7 @@ import optax
 from modelling.models.llama import LlamaConfig
 from utils.configs import DataConfig, DummyDataConfig, HFDataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
 
+sequence_length = 4096
 
 model_config = LlamaConfig(
     vocab_size=128256,
@@ -24,7 +25,7 @@ model_config = LlamaConfig(
     intermediate_dim=8192,
     head_dim=64,
     act_fn=nnx.silu,
-    max_seq_len=4096,
+    max_seq_len=sequence_length,
     use_attention_bias=False,
     use_mlp_bias=False,
     rms_norm_eps=1e-5,
@@ -34,10 +35,9 @@ model_config = LlamaConfig(
 
 # train_data = DummyDataConfig(
 train_data = HFDataConfig(
-    source="hf",
     hf_name=["HuggingFaceFW/fineweb-edu", "sample-10BT"],
     tokenizer_name="gpt2",
-    max_length=4096,
+    max_length=sequence_length,
 )
 
 optim_config = OptimizerConfig(
@@ -45,8 +45,8 @@ optim_config = OptimizerConfig(
     weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=16,
-    accum_steps=1,
+    batch_size=2 * 8,
+    accum_steps=16,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,
@@ -70,7 +70,6 @@ exp_config = ExperimentConfig(
     train_data=train_data,
     val_data=None,
     steps=100,
-    log_every=1,
     generate_every=10000,
     eval_every=-1,
     save_every=1_0000,
@@ -78,7 +77,7 @@ exp_config = ExperimentConfig(
     trace_dir="traces",
     start_trace_micro_step=10,
     end_trace_micro_step=20,
-    gpu="A100",
+    gpu="H100",
 )
 
 from train import train
