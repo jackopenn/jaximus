@@ -10,6 +10,8 @@ from modelling.layers.core import GLU, Attention
 import chz
 from utils.configs import ModelConfig
 
+
+
 @chz.chz
 class LlamaConfig(ModelConfig):
     name: str = "llama"
@@ -60,8 +62,8 @@ class LlamaLayer(nnx.Module):
         self.mlp = GLU(hidden_dim, intermediate_dim, act_fn, use_bias=use_mlp_bias, dtype=dtype, rngs=rngs)
         self.norm_2 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, epsilon=rms_norm_eps, rngs=rngs)
 
-    def __call__(self, x: jnp.ndarray, attention_mask: jnp.ndarray) -> jnp.ndarray:
-        x = x + self.attention(self.norm_1(x), mask=attention_mask)
+    def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
+        x = x + self.attention(self.norm_1(x), mask=mask)
         x = x + self.mlp(self.norm_2(x))
         return x
 
@@ -95,12 +97,10 @@ class Llama(nnx.Module):
         ]
         self.lm_norm = nnx.RMSNorm(config.hidden_dim, dtype=jnp.float32, epsilon=config.rms_norm_eps, rngs=rngs)
 
-    def __call__(self, input_ids: jnp.ndarray, attention_mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        if attention_mask is None:
-            attention_mask = nnx.make_causal_mask(input_ids)
+    def __call__(self, input_ids: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
         x = self.token_embedding(input_ids)
         for layer in self.layers:
-            x = layer(x, attention_mask)
+            x = layer(x, mask)
         x = self.lm_norm(x)
         return self.token_embedding.attend(x)
     

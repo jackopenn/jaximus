@@ -149,7 +149,6 @@ def train(cfg: ExperimentConfig):
                     ckpt_mngr.save(step, metrics=loss, args=ocp.args.StandardSave(state))
                     wandb.log_artifact(f"{ckpt_dir}/{step}", name=f"run_{wandb.run.id}_model", type="model", aliases=[f"step_{step}"])
 
-            micro_step = 0
             step += 1
             t0 = time.time()
             

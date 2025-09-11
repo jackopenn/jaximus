@@ -1,7 +1,14 @@
 import os 
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.98"
 os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "false"
+
+os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
+os.environ["NCCL_NTHREADS"] = "2"              # Reduce NCCL worker threads  
+os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
+os.environ["NCCL_MIN_NCHANNELS"] = "2"         # Force minimal channels
+os.environ["NCCL_P2P_DISABLE"] = "0"           # Keep P2P but reduce memory
+os.environ["NCCL_SHM_DISABLE"] = "1" 
 
 from dataclasses import dataclass, field
 from typing import Callable
@@ -15,6 +22,9 @@ from modelling.models.llama import LlamaConfig
 from utils.configs import DataConfig, DummyDataConfig, HFDataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
 
 sequence_length = 4096
+n_gpu = 8
+micro_batch_size = 2
+accum_steps = 1
 
 model_config = LlamaConfig(
     vocab_size=128256,
@@ -36,7 +46,7 @@ model_config = LlamaConfig(
 # train_data = DummyDataConfig(
 train_data = HFDataConfig(
     hf_name=["HuggingFaceFW/fineweb-edu", "sample-10BT"],
-    tokenizer_name="gpt2",
+    tokenizer_name="meta-llama/Llama-3.1-8B-Instruct",
     max_length=sequence_length,
 )
 
@@ -45,8 +55,9 @@ optim_config = OptimizerConfig(
     weight_decay=0.01,
     betas=(0.9, 0.95),
     grad_clip=1.0,
-    batch_size=2 * 8,
-    accum_steps=16,
+    batch_size=micro_batch_size * n_gpu,
+    accum_steps=accum_steps,
+    eps=1e-8,
     lr=optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=6e-4,
@@ -58,7 +69,7 @@ optim_config = OptimizerConfig(
 
 
 parallel_config = ParallelConfig(
-    data_parallel=8,
+    data_parallel=n_gpu,
 )
 
 exp_config = ExperimentConfig(
