@@ -2,7 +2,7 @@ import jax
 from jax import numpy as jnp
 import grain
 
-def get_dummy_dataset(max_length: int):
+def get_dummy_dataset(max_length: int, batch_size: int):
     batch = (
         jax.random.randint(
             jax.random.PRNGKey(0),
@@ -18,4 +18,4 @@ def get_dummy_dataset(max_length: int):
         )
     )
 
-    return None, grain.MapDataset.source(batch).to_iter_dataset()
+    return grain.MapDataset.source(batch).to_iter_dataset().batch(batch_size)

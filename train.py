@@ -23,7 +23,6 @@ def train(cfg: ExperimentConfig):
     profiler_options = jax.profiler.ProfileOptions()
     profiler_options.host_tracer_level = 3
 
-
     assert cfg.generate_every % cfg.log_every == 0, (
         f"generate_every must be a multiple of log_every for accurate timing :)"
     )
@@ -34,7 +33,8 @@ def train(cfg: ExperimentConfig):
         f"save_every must be a multiple of log_every"
     )
 
-    tokenizer, dataset = get_dataset(cfg.train_data, cfg.optimizer.batch_size)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.train_data.tokenizer_name)
+    dataset = get_dataset(cfg.train_data, cfg.optimizer.batch_size)
     model = get_model(cfg.model, cfg.seed)
     optimizer = get_optimizer(model,cfg.optimizer)
 
@@ -70,6 +70,7 @@ def train(cfg: ExperimentConfig):
         ).mean()
         return loss
     
+
     @nnx.jit
     def train_step(model, optimizer, batch, metrics):
         loss, grads = jax.value_and_grad(loss_fn)(model, batch)

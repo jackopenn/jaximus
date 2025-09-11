@@ -12,20 +12,28 @@ import jax
 from flax import nnx
 
 def get_dataset(config: DataConfig, batch_size: int):
-    if config.source == "hf":
+    if isinstance(config, HFDataConfig):
         return get_hf_dataset(
             hf_name=config.hf_name,
             tokenizer_name=config.tokenizer_name,
             sequence_length=config.max_length,
             batch_size=batch_size
         )
-    elif config.source == "dummy":
+    elif isinstance(config, DummyDataConfig):
         return get_dummy_dataset(
             max_length=config.max_length,
+            batch_size=batch_size
+        )
+    elif isinstance(config, ArrayRecordDataConfig):
+        return get_array_record_dataset(
+            path=config.path,
+            sequence_length=config.max_length,
+            batch_size=batch_size
         )
     else:
-        raise ValueError(f"Dataset source {config.source} not found")
+        raise ValueError(f"Dataset {config} not found")
     
+
 def get_model(config: ModelConfig, seed: int):
     if isinstance(config, GPTConfig):
         return GPT(config, nnx.Rngs(jax.random.PRNGKey(seed)))
@@ -34,9 +42,8 @@ def get_model(config: ModelConfig, seed: int):
     elif isinstance(config, LlamaConfig):
         return Llama(config, nnx.Rngs(jax.random.PRNGKey(seed)))
     else:
-        raise ValueError(f"Model {config.name} not found")
+        raise ValueError(f"Model {config} not found")
     
-
 
 def get_optimizer(model, config: OptimizerConfig):
     if config.name == "adamw":
@@ -55,6 +62,6 @@ def get_optimizer(model, config: OptimizerConfig):
             every_k_schedule=config.accum_steps,
         )
     else:
-        raise ValueError(f"Optimizer {config.name} not found")
+        raise ValueError(f"Optimizer {config} not found")
     
     return nnx.Optimizer(model, tx, wrt=nnx.Param)

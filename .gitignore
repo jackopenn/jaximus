@@ -4,4 +4,6 @@ wandb/
 checkpoints/
 traces/
 artifacts/
+saved/
 uv.lock
+.DS_Store
