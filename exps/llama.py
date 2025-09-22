@@ -22,9 +22,9 @@ from modelling.models.llama import LlamaConfig
 from utils.configs import DataConfig, DummyDataConfig, HFDataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
 
 sequence_length = 4096
-n_gpu = 1
+n_gpu = 8
 micro_batch_size = 2
-accum_steps = 1
+accum_steps = 16
 
 model_config = LlamaConfig(
     vocab_size=128256,
