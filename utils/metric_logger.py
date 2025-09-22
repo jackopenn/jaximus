@@ -6,7 +6,7 @@ class MetricLogger:
         self.batch_size = batch_size
         self.accum_steps = accum_steps
         self.sequence_length = sequence_length
-        self.n_flops_per_token = n_flops_per_token
+        self.n_flops_per_token = float(n_flops_per_token)
         self.gpu_name = gpu_name
         self.optimizer_scheduler = optimizer_scheduler
         self.wandb = wandb
@@ -17,7 +17,7 @@ class MetricLogger:
         if isinstance(optimizer_scheduler, float):
             self.learning_rate = lambda step: optimizer_scheduler
         else:
-            self.learning_rate = lambda step: optimizer_scheduler(step)
+            self.learning_rate = lambda step: jax.jit(optimizer_scheduler(step), backend="cpu")
 
         self.prev_metrics = None
         self.step = 1
