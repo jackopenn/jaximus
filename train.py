@@ -133,8 +133,10 @@ def train(cfg: ExperimentConfig):
         micro_step += 1
 
         if micro_step % cfg.optimizer.accum_steps == 0:
-            loss.block_until_ready()
+            # loss.block_until_ready()
             step_time = time.time() - t0
+            t0 = time.time()
+
             train_logger.log({
                 "loss": loss,
                 "grad_norm": grad_norm,
@@ -152,7 +154,6 @@ def train(cfg: ExperimentConfig):
                     wandb.log_artifact(f"{ckpt_dir}/{step}", name=f"run_{wandb.run.id}_model", type="model", aliases=[f"step_{step}"])
 
             step += 1
-            t0 = time.time()
             
 
 if __name__ == "__main__":
