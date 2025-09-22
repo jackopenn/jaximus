@@ -22,7 +22,7 @@ from modelling.models.llama import LlamaConfig
 from utils.configs import DataConfig, DummyDataConfig, HFDataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
 
 sequence_length = 4096
-n_gpu = 8
+n_gpu = 1
 micro_batch_size = 2
 accum_steps = 1
 
@@ -88,7 +88,7 @@ exp_config = ExperimentConfig(
     trace_dir="traces",
     start_trace_micro_step=10,
     end_trace_micro_step=20,
-    gpu="H100",
+    gpu="A100",
 )
 
 from train import train
