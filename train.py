@@ -74,7 +74,8 @@ def train(cfg: ExperimentConfig):
     def train_step(model, optimizer, batch):
         loss, grads = jax.value_and_grad(loss_fn)(model, batch)
         optimizer.update(model, grads)
-        grad_norm = jnp.sqrt(sum(jnp.sum(jnp.abs(x)**2) for x in jax.tree.leaves(grads)))
+        # grad_norm = jnp.sqrt(sum(jnp.sum(jnp.abs(x)**2) for x in jax.tree.leaves(grads)))
+        grad_norm = optax.global_norm(grads)
         return loss, grad_norm
 
 
@@ -132,6 +133,7 @@ def train(cfg: ExperimentConfig):
         micro_step += 1
 
         if micro_step % cfg.optimizer.accum_steps == 0:
+            loss.block_until_ready()
             step_time = time.time() - t0
             train_logger.log({
                 "loss": loss,
