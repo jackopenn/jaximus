@@ -3,12 +3,14 @@ import os
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.98"
 os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "false"
 
-os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
-os.environ["NCCL_NTHREADS"] = "2"              # Reduce NCCL worker threads  
-os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
-os.environ["NCCL_MIN_NCHANNELS"] = "2"         # Force minimal channels
-os.environ["NCCL_P2P_DISABLE"] = "0"           # Keep P2P but reduce memory
-os.environ["NCCL_SHM_DISABLE"] = "1" 
+# os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
+# os.environ["NCCL_NTHREADS"] = "2"              # Reduce NCCL worker threads  
+# os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
+# os.environ["NCCL_MIN_NCHANNELS"] = "2"         # Force minimal channels
+# os.environ["NCCL_P2P_DISABLE"] = "0"           # Keep P2P but reduce memory
+# os.environ["NCCL_SHM_DISABLE"] = "1"
+
+os.environ["XLA_FLAGS"] = '--xla_force_host_platform_device_count=4'
 
 from dataclasses import dataclass, field
 from typing import Callable
@@ -21,18 +23,18 @@ import optax
 from modelling.models.llama import LlamaConfig
 from utils.configs import DataConfig, DummyDataConfig, HFDataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
 
-sequence_length = 4096
-n_gpu = 1
-micro_batch_size = 2
+sequence_length = 1024
+n_gpu = 4
+micro_batch_size = 1
 accum_steps = 1
 
 model_config = LlamaConfig(
     vocab_size=128256,
-    hidden_dim=2048,
-    num_layers=16,
-    num_attention_heads=32,
-    num_key_value_heads=8,
-    intermediate_dim=8192,
+    hidden_dim=256,
+    num_layers=1,
+    num_attention_heads=4,
+    num_key_value_heads=4,
+    intermediate_dim=1024,
     head_dim=64,
     act_fn=nnx.silu,
     max_seq_len=sequence_length,
@@ -70,7 +72,9 @@ optim_config = OptimizerConfig(
 
 parallel_config = ParallelConfig(
     data_parallel=n_gpu,
+    zero_stage=3
 )
+    
 
 exp_config = ExperimentConfig(
     name="llama",

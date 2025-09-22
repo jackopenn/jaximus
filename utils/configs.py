@@ -23,6 +23,7 @@ class OptimizerConfig:
 @chz.chz
 class ParallelConfig:
     data_parallel: int
+    zero_stage: Optional[int]
 
 
 @chz.chz

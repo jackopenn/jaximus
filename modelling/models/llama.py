@@ -44,6 +44,7 @@ class LlamaLayer(nnx.Module):
             use_attention_bias: bool,
             use_mlp_bias: bool,
             dtype: jnp.dtype,
+            shard_axis_name: str | None,
             rngs: nnx.Rngs,
     ):
         super().__init__()
@@ -56,11 +57,30 @@ class LlamaLayer(nnx.Module):
             dtype=dtype,
             qk_norm=False,
             use_bias=use_attention_bias,
+            shard_axis_name=shard_axis_name,
             rngs=rngs
         )
-        self.norm_1 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, epsilon=rms_norm_eps, rngs=rngs)
-        self.mlp = GLU(hidden_dim, intermediate_dim, act_fn, use_bias=use_mlp_bias, dtype=dtype, rngs=rngs)
-        self.norm_2 = nnx.RMSNorm(hidden_dim, dtype=jnp.float32, epsilon=rms_norm_eps, rngs=rngs)
+        self.norm_1 = nnx.RMSNorm(
+            hidden_dim,
+            dtype=jnp.float32,
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), (shard_axis_name,)),
+            rngs=rngs
+            )
+        self.mlp = GLU(
+            hidden_dim,
+            intermediate_dim,
+            act_fn,
+            use_bias=use_mlp_bias,
+            dtype=dtype,
+            shard_axis_name=shard_axis_name,
+            rngs=rngs
+        )
+        self.norm_2 = nnx.RMSNorm(
+            hidden_dim,
+            dtype=jnp.float32,
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), (shard_axis_name,)),
+            rngs=rngs
+        )
 
     def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
         x = x + self.attention(self.norm_1(x), mask=mask)
@@ -69,13 +89,14 @@ class LlamaLayer(nnx.Module):
 
 
 class Llama(nnx.Module):
-    def __init__(self, config: LlamaConfig, rngs: nnx.Rngs):
+    def __init__(self, config: LlamaConfig, shard_axis_name: str | None, rngs: nnx.Rngs):
         super().__init__()
         self.config = config
         self.token_embedding = nnx.Embed(
             num_embeddings=config.vocab_size,
             features=config.hidden_dim,
             dtype=config.dtype,
+            embedding_init=nnx.with_partitioning(nnx.initializers.normal(stddev=0.02), (shard_axis_name, None)),
             rngs=rngs,
         )
         self.layers = [
@@ -91,12 +112,18 @@ class Llama(nnx.Module):
                 rms_norm_eps=config.rms_norm_eps,
                 use_attention_bias=config.use_attention_bias,
                 use_mlp_bias=config.use_mlp_bias,
+                shard_axis_name=shard_axis_name,
                 rngs=rngs
             )
             for _ in range(config.num_layers)
         ]
-        self.lm_norm = nnx.RMSNorm(config.hidden_dim, dtype=jnp.float32, epsilon=config.rms_norm_eps, rngs=rngs)
-
+        self.lm_norm = nnx.RMSNorm(
+            config.hidden_dim,
+            dtype=jnp.float32,
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), (shard_axis_name,)),
+            rngs=rngs
+        )
+            
     def __call__(self, input_ids: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
         x = self.token_embedding(input_ids)
         for layer in self.layers:

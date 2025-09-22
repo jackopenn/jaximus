@@ -17,7 +17,8 @@ class MLP(nnx.Module):
         dtype: jnp.dtype,
         kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
         bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
-        proj_init: nnx.Initializer = nnx.initializers.lecun_normal()
+        proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
+        shard_axis_name: str | None = None
     ):
         super().__init__()
         self.up_proj = nnx.Linear(
@@ -26,8 +27,8 @@ class MLP(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=kernel_init,
-            bias_init=bias_init
+            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
+            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
         self.down_proj = nnx.Linear(
             intermediate_dim,
@@ -35,8 +36,8 @@ class MLP(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=proj_init,
-            bias_init=bias_init
+            kernel_init=nnx.with_partitioning(proj_init, (None, shard_axis_name)),
+            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
         self.act_fn = act_fn
 
@@ -58,7 +59,8 @@ class GLU(nnx.Module):
         dtype: jnp.dtype,
         kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
         bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
-        proj_init: nnx.Initializer = nnx.initializers.lecun_normal()
+        proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
+        shard_axis_name: str | None = None
     ):
         super().__init__()
         self.up_proj = nnx.Linear(
@@ -67,8 +69,8 @@ class GLU(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=kernel_init,
-            bias_init=bias_init
+            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
+            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
         self.gate_proj = nnx.Linear(
             hidden_dim,
@@ -76,8 +78,8 @@ class GLU(nnx.Module):
             use_bias=use_bias, 
             dtype=dtype,
             rngs=rngs,
-            kernel_init=kernel_init,
-            bias_init=bias_init
+            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
+            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
         self.down_proj = nnx.Linear(
             intermediate_dim,
@@ -85,8 +87,8 @@ class GLU(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=proj_init,
-            bias_init=bias_init
+            kernel_init=nnx.with_partitioning(proj_init, (None, shard_axis_name)),
+            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
         self.act_fn = act_fn
 
@@ -108,6 +110,7 @@ class Attention(nnx.Module):
         kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
         bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
         proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
+        shard_axis_name: str | None = None
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -124,8 +127,8 @@ class Attention(nnx.Module):
             num_attention_heads * head_dim,
             use_bias=use_bias,
             dtype=dtype, rngs=rngs,
-            kernel_init=kernel_init,
-            bias_init=bias_init
+            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
+            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
         self.k_proj = nnx.Linear(
             hidden_dim,
@@ -133,8 +136,8 @@ class Attention(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=kernel_init,
-            bias_init=bias_init
+            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
+            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
         self.v_proj = nnx.Linear(
             hidden_dim,
@@ -142,8 +145,8 @@ class Attention(nnx.Module):
             use_bias=use_bias,
             dtype=dtype, 
             rngs=rngs,
-            kernel_init=kernel_init,
-            bias_init=bias_init
+            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
+            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
 
         self.o_proj = nnx.Linear(
@@ -152,13 +155,22 @@ class Attention(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=proj_init, 
-            bias_init=bias_init
+            kernel_init=nnx.with_partitioning(proj_init, (None, shard_axis_name)),
+            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
             )
 
         if self.qk_norm:
-            self.q_norm = nnx.RMSNorm(head_dim, dtype=jnp.float32, rngs=rngs)
-            self.k_norm = nnx.RMSNorm(head_dim, dtype=jnp.float32, rngs=rngs)
+            self.q_norm = nnx.RMSNorm(
+                head_dim,
+                dtype=jnp.float32,
+                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), (shard_axis_name,)),
+                rngs=rngs
+            )
+            self.k_norm = nnx.RMSNorm(
+                head_dim,
+                dtype=jnp.float32,
+                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), (shard_axis_name,)),
+                rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
         B, S, D = x.shape

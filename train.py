@@ -20,6 +20,9 @@ import wandb
 import orbax.checkpoint as ocp
 import re
 
+from utils.parallel import shard_model_and_optimizer
+
+
 def pretty_print_samples(samples):
     for prompt, samples_list in samples.items():
         print(f"prompt: {prompt}")
@@ -34,35 +37,88 @@ def train(cfg: ExperimentConfig):
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.train_data.tokenizer_name)
     dataset = get_dataset(cfg.train_data, cfg.optimizer.batch_size)
-    model = get_model(cfg.model, cfg.seed)
-    optimizer = get_optimizer(model,cfg.optimizer)
+    model = get_model(cfg.model, cfg.seed, cfg.parallel)
+    optimizer = get_optimizer(model, cfg.optimizer)
 
-    shard_batch = lambda batch: batch
-    if cfg.parallel.data_parallel > 1:
+    # shard_batch = lambda batch: batch
+    # if cfg.parallel.data_parallel > 1:
+    #     num_devices = jax.device_count()
+
+    #     assert 0 < cfg.parallel.data_parallel <= num_devices, (
+    #         f"data_parallel must be less than or equal to the number of devices: {num_devices} and greater than 0"
+    #     )
+
+    #     mesh = jax.make_mesh((cfg.parallel.data_parallel,), ("data",))
+    #     data_sharding = NamedSharding(mesh, PartitionSpec("data", None))
+    #     replicated_sharding = NamedSharding(mesh, PartitionSpec())
+
+    #     _, model_state = nnx.split(model)
+    #     sharded_model_state = jax.lax.with_sharding_constraint(model_state, replicated_sharding)
+    #     nnx.update(model, sharded_model_state)
+
+    #     _, optim_state = nnx.split(optimizer)
+    #     sharded_optim_state = jax.lax.with_sharding_constraint(optim_state, replicated_sharding)
+    #     nnx.update(optimizer, sharded_optim_state)
+        
+    #     shard_batch = lambda batch: jax.tree_util.tree_map(lambda x: jax.device_put(x, data_sharding), batch)
+
+    print(model)
+    print(jax.device_count(), jax.devices())
+
+    if cfg.parallel:
         num_devices = jax.device_count()
-
+        
         assert 0 < cfg.parallel.data_parallel <= num_devices, (
             f"data_parallel must be less than or equal to the number of devices: {num_devices} and greater than 0"
         )
 
         mesh = jax.make_mesh((cfg.parallel.data_parallel,), ("data",))
+        print(mesh)
+        model, optimizer = shard_model_and_optimizer(model, optimizer, cfg.parallel, mesh)
+        print(model)
         data_sharding = NamedSharding(mesh, PartitionSpec("data", None))
-        replicated_sharding = NamedSharding(mesh, PartitionSpec())
-
-        _, model_state = nnx.split(model)
-        sharded_model_state = jax.lax.with_sharding_constraint(model_state, replicated_sharding)
-        nnx.update(model, sharded_model_state)
-
-        _, optim_state = nnx.split(optimizer)
-        sharded_optim_state = jax.lax.with_sharding_constraint(optim_state, replicated_sharding)
-        nnx.update(optimizer, sharded_optim_state)
-        
         shard_batch = lambda batch: jax.tree_util.tree_map(lambda x: jax.device_put(x, data_sharding), batch)
-
+    print("visualizing")
+    print("token_embedding")
+    jax.debug.visualize_array_sharding(model.token_embedding.embedding.value)
+    print("q_proj")
+    jax.debug.visualize_array_sharding(model.layers[0].attention.q_proj.kernel.value)
+    print("k_proj")
+    jax.debug.visualize_array_sharding(model.layers[0].attention.k_proj.kernel.value)
+    print("v_proj")
+    jax.debug.visualize_array_sharding(model.layers[0].attention.v_proj.kernel.value)
+    print("o_proj")
+    jax.debug.visualize_array_sharding(model.layers[0].attention.o_proj.kernel.value)
+    # jax.debug.visualize_array_sharding(model.layers[0].norm_1.scla)
+    # jax.debug.visualize_array_sharding(model.layers[0].norm_2.kernel)
+    print("up_proj")
+    jax.debug.visualize_array_sharding(model.layers[0].mlp.up_proj.kernel.value)
+    print("down_proj")
+    jax.debug.visualize_array_sharding(model.layers[0].mlp.down_proj.kernel.value)
+    # jax.debug.visualize_array_sharding(model.lm_norm.value)
+    
+    print("sharding")
+    print("token_embedding")
+    print(model.token_embedding.embedding.value.sharding)
+    print("q_proj")
+    print(model.layers[0].attention.q_proj.kernel.value.sharding)
+    print("k_proj")
+    print(model.layers[0].attention.k_proj.kernel.value.sharding)
+    print("v_proj")
+    print(model.layers[0].attention.v_proj.kernel.value.sharding)
+    print("o_proj")
+    print(model.layers[0].attention.o_proj.kernel.value.sharding)
+    # jax.debug.visualize_array_sharding(model.layers[0].norm_1.scla)
+    # jax.debug.visualize_array_sharding(model.layers[0].norm_2.kernel)
+    print("up_proj")
+    print(model.layers[0].mlp.up_proj.kernel.value.sharding)
+    print("down_proj")
+    print(model.layers[0].mlp.down_proj.kernel.value.sharding)
+    # jax.debug.visualize_array_sharding(model.lm_norm.value)
 
     def loss_fn(model, batch):
         x, y = batch
-        logits = model(x)
+        logits = print(jax.make_jaxpr(model)(x))
         loss = optax.softmax_cross_entropy_with_integer_labels(
             logits.reshape(-1, logits.shape[-1]).astype(jnp.float32),
             y.reshape(-1)
@@ -94,10 +150,10 @@ def train(cfg: ExperimentConfig):
     ckpt_mngr = ocp.CheckpointManager(ckpt_dir, options=ckpt_options)
 
 
-    wandb.init(
-        project="transformers",
-        config=cfg,
-    )
+    # wandb.init(
+    #     project="transformers",
+    #     config=cfg,
+    # )
 
     train_logger = MetricLogger(
         batch_size=cfg.optimizer.batch_size,
@@ -106,13 +162,17 @@ def train(cfg: ExperimentConfig):
         n_flops_per_token=nflops_per_token,
         gpu_name=cfg.gpu,
         optimizer_scheduler=cfg.optimizer.lr,
-        wandb=wandb,
+        # wandb=wandb,
+        wandb=None,
     )
 
     # https://flax.readthedocs.io/en/latest/guides/performance.html#performance-considerations
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
-    train_iter = (shard_batch(batch) for batch in dataset)
+    if cfg.parallel:
+        train_iter = (shard_batch(batch) for batch in dataset)
+    else:
+        train_iter = iter(dataset)
 
     step = 1
     micro_step = 0
@@ -133,6 +193,7 @@ def train(cfg: ExperimentConfig):
         micro_step += 1
 
         if micro_step % cfg.optimizer.accum_steps == 0:
+            # loss.block_until_ready()
             step_time = time.time() - t0
             t0 = time.time()
 
@@ -153,6 +214,7 @@ def train(cfg: ExperimentConfig):
                     wandb.log_artifact(f"{ckpt_dir}/{step}", name=f"run_{wandb.run.id}_model", type="model", aliases=[f"step_{step}"])
 
             step += 1
+            
 
 if __name__ == "__main__":
     chz.nested_entrypoint(train)

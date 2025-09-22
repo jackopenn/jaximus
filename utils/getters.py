@@ -6,7 +6,7 @@ from data.array_records import get_array_record_dataset
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
 from modelling.models.llama import Llama, LlamaConfig
-from utils.configs import DataConfig, ModelConfig, OptimizerConfig, HFDataConfig, DummyDataConfig, ArrayRecordDataConfig
+from utils.configs import DataConfig, ModelConfig, OptimizerConfig, HFDataConfig, DummyDataConfig, ArrayRecordDataConfig, ParallelConfig
 
 import optax
 import jax
@@ -35,13 +35,14 @@ def get_dataset(config: DataConfig, batch_size: int):
         raise ValueError(f"Dataset {config} not found")
     
 
-def get_model(config: ModelConfig, seed: int):
+def get_model(config: ModelConfig, seed: int, parallel: ParallelConfig):
+    shard_axis_name = "data" if parallel.data_parallel > 1 else None
     if isinstance(config, GPTConfig):
         return GPT(config, nnx.Rngs(jax.random.PRNGKey(seed)))
     elif isinstance(config, Qwen3Config):
         return Qwen3(config, nnx.Rngs(jax.random.PRNGKey(seed)))
     elif isinstance(config, LlamaConfig):
-        return Llama(config, nnx.Rngs(jax.random.PRNGKey(seed)))
+        return Llama(config, rngs=nnx.Rngs(jax.random.PRNGKey(seed)), shard_axis_name=shard_axis_name)
     else:
         raise ValueError(f"Model {config} not found")
     
