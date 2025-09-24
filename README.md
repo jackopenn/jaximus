@@ -1,4 +1,5 @@
 # Jaximus 🚀 (Work in progress)
+(README.md is just AI slop lol)
 **A barebones library for pretraining Large Language Models**
 
 Built with JAX ecosystem: **Jax/Flax/Optax/Orbax/Grain**
