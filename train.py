@@ -35,6 +35,10 @@ def train(cfg: ExperimentConfig):
     profiler_options = jax.profiler.ProfileOptions()
     profiler_options.host_tracer_level = 3
 
+    profiler_options.gpu_enable_nvtx_tracking = True
+    profiler_options.gpu_enable_cupti_activity_graph_trace = True
+    profiler_options.gpu_dump_graph_node_mapping = True
+
     tokenizer = AutoTokenizer.from_pretrained(cfg.train_data.tokenizer_name)
     dataset = get_dataset(cfg.train_data, cfg.optimizer.batch_size)
     partial_model = get_partial_model(cfg.model, cfg.seed)
@@ -62,6 +66,15 @@ def train(cfg: ExperimentConfig):
         train_iter = iter(dataset)
 
 
+    def zero_shard(zero_stage, model, optimizer, grads):
+        # in stage 1 | 2 force repl of model + grads | model
+        repl_sharding = NamedSharding(mesh, PartitionSpec())
+        if zero_stage in {1, 2}:
+            model = jax.lax.with_sharding_constraint(model, repl_sharding)
+            if zero_stage == 1:
+                grads = jax.lax.with_sharding_constraint(grads, repl_sharding)
+        return model, optimizer, grads
+
     def loss_fn(model, batch):
         x, y = batch
         logits = model(x)
@@ -75,6 +88,7 @@ def train(cfg: ExperimentConfig):
     @nnx.jit
     def train_step(model, optimizer, batch):
         loss, grads = jax.value_and_grad(loss_fn)(model, batch)
+        model, optimizer, grads = zero_shard(cfg.parallel.zero_stage, model, optimizer, grads)
         optimizer.update(model, grads)
         grad_norm = optax.global_norm(grads)
         return loss, grad_norm

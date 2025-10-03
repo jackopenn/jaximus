@@ -15,11 +15,11 @@ class MetricLogger:
         self.num_devices = jax.device_count()
         self.gpu_peak_flops = get_gpu_peak_flops(gpu_name) * self.num_devices
         self.cpu_device = jax.devices("cpu")[0]
-        # if isinstance(optimizer_scheduler, float):
-        #     self.learning_rate = lambda step: optimizer_scheduler
-        # else:
-        #     # force on cpu to avoid blocking
-        #     self.learning_rate = lambda step: optimizer_scheduler(step)
+        if isinstance(optimizer_scheduler, float):
+            self.learning_rate = lambda step: optimizer_scheduler
+        else:
+            # force on cpu to avoid blocking
+            self.learning_rate = lambda step: optimizer_scheduler(step)
 
         self.prev_metrics = None
         self.step = 1
@@ -63,7 +63,7 @@ class MetricLogger:
         log_metrics["tokens_per_second"] = self.tokens_per_batch / log_metrics["step_time"]
         log_metrics["tokens_per_second_per_device"] = log_metrics["tokens_per_second"] / self.num_devices
         log_metrics["mfu"] = ((self.n_flops_per_token * log_metrics["tokens_per_second"]) / self.gpu_peak_flops) * 100
-        # log_metrics["lr"] = self.learning_rate(self.step)
+        log_metrics["lr"] = self.learning_rate(self.step)
 
         self._pretty_print(log_metrics)
         

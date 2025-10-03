@@ -3,11 +3,19 @@ import os
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.98"
 os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "false"
 
+# no difference
 os.environ['XLA_FLAGS'] = "--xla_gpu_enable_latency_hiding_scheduler=true"
 
-# os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
-# os.environ["NCCL_NTHREADS"] = "2"              # Reduce NCCL worker threads  
-# os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
+#   --xla_gpu_enable_while_loop_double_buffering=true does nothing
+
+# maybe did something
+# os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
+# os.environ["NCCL_PROTO"] = "SIMPLE,LL,LL128"
+# os.environ["NCCL_NVLS_ENABLE"] = "1"  
+
+os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
+os.environ["NCCL_NTHREADS"] = "2"              # Reduce NCCL worker threads  
+os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
 # os.environ["NCCL_MIN_NCHANNELS"] = "2"         # Force minimal channels
 # os.environ["NCCL_P2P_DISABLE"] = "0"           # Keep P2P but reduce memory
 # os.environ["NCCL_SHM_DISABLE"] = "1"
@@ -25,9 +33,10 @@ from modelling.models.llama import LlamaConfig
 from utils.configs import DataConfig, DummyDataConfig, HFDataConfig, OptimizerConfig, ExperimentConfig, ParallelConfig
 
 sequence_length = 4096
-n_gpu = 4
+n_gpu = 8
 micro_batch_size = 2
 accum_steps = 1
+gpu_name = "H100"
 
 model_config = LlamaConfig(
     vocab_size=128256,
@@ -93,7 +102,7 @@ exp_config = ExperimentConfig(
     trace_dir="traces",
     start_trace_micro_step=10,
     end_trace_micro_step=20,
-    gpu="A100",
+    gpu=gpu_name,
 )
 
 from train import train
