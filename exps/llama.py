@@ -10,7 +10,6 @@ os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "false"
 # os.environ["NCCL_P2P_DISABLE"] = "0"           # Keep P2P but reduce memory
 # os.environ["NCCL_SHM_DISABLE"] = "1"
 
-os.environ["XLA_FLAGS"] = '--xla_force_host_platform_device_count=4'
 
 from dataclasses import dataclass, field
 from typing import Callable

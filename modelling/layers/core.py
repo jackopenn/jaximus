@@ -94,6 +94,7 @@ class GLU(nnx.Module):
     def __call__(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
+
 class Attention(nnx.Module):
     def __init__(
         self,
