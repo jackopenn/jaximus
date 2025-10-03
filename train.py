@@ -3,7 +3,7 @@ import os
 import chz
 from functools import partial
 from utils.common import get_gpu_peak_flops, get_nparams_and_flops
-from utils.getters import get_dataset, get_model, get_optimizer
+from utils.getters import get_dataset, get_optimizer_tx, get_partial_model, get_partial_optimizer
 from utils.configs import ExperimentConfig
 from utils.metric_logger import MetricLogger
 from generate import generate
@@ -20,8 +20,7 @@ import wandb
 import orbax.checkpoint as ocp
 import re
 
-from utils.parallel import shard_model_and_optimizer
-d
+from utils.parallel import init_model_and_optimizer_with_sharding, make_and_set_mesh
 
 
 def pretty_print_samples(samples):
@@ -38,8 +37,8 @@ def train(cfg: ExperimentConfig):
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.train_data.tokenizer_name)
     dataset = get_dataset(cfg.train_data, cfg.optimizer.batch_size)
-    model = get_model(cfg.model, cfg.seed, cfg.parallel)
-    optimizer = get_optimizer(model, cfg.optimizer)
+    partial_model = get_partial_model(cfg.model, cfg.seed)
+    optimizer_tx = get_optimizer_tx(cfg.optimizer)
     
 
     if cfg.parallel:
@@ -50,13 +49,16 @@ def train(cfg: ExperimentConfig):
             f"data_parallel must be less than or equal to the number of devices: {num_devices} and greater than 0"
         )
 
-        mesh = jax.make_mesh((cfg.parallel.data_parallel,), ("data",))
-        model, optimizer = shard_model_and_optimizer(model, optimizer, cfg.parallel, mesh)
-        data_sharding = NamedSharding(mesh, PartitionSpec("data", None))
-        shard_batch = lambda batch: jax.tree_util.tree_map(lambda x: jax.device_put(x, data_sharding), batch)
+        mesh = make_and_set_mesh(cfg.parallel)
 
+        model, optimizer = init_model_and_optimizer_with_sharding(partial_model, optimizer_tx, cfg.parallel)
+
+        data_sharding = NamedSharding(mesh, PartitionSpec("data", None, None))
+        shard_batch = lambda batch: jax.tree_util.tree_map(lambda x: jax.device_put(x, data_sharding), batch)
         train_iter = (shard_batch(batch) for batch in dataset)
     else:
+        model = partial_model()
+        optimizer = nnx.Optimizer(model, optimizer_tx, wrt=nnx.Param)
         train_iter = iter(dataset)
 
 

@@ -60,7 +60,6 @@ class GLU(nnx.Module):
         kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
         bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
         proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
-        shard_axis_name: str | None = None
     ):
         super().__init__()
         self.up_proj = nnx.Linear(
@@ -69,8 +68,8 @@ class GLU(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
-            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
+            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "intermediate")),
+            bias_init=nnx.with_partitioning(bias_init, ("embed"))
         )
         self.gate_proj = nnx.Linear(
             hidden_dim,
@@ -78,8 +77,8 @@ class GLU(nnx.Module):
             use_bias=use_bias, 
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
-            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
+            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "intermediate")),
+            bias_init=nnx.with_partitioning(bias_init, ("embed"))
         )
         self.down_proj = nnx.Linear(
             intermediate_dim,
@@ -87,8 +86,8 @@ class GLU(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(proj_init, (None, shard_axis_name)),
-            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
+            kernel_init=nnx.with_partitioning(proj_init, ("intermediate", "embed")),
+            bias_init=nnx.with_partitioning(bias_init, ("intermediate"))
         )
         self.act_fn = act_fn
 
@@ -110,7 +109,6 @@ class Attention(nnx.Module):
         kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
         bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
         proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
-        shard_axis_name: str | None = None
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -127,8 +125,8 @@ class Attention(nnx.Module):
             num_attention_heads * head_dim,
             use_bias=use_bias,
             dtype=dtype, rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
-            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
+            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "q")),
+            bias_init=nnx.with_partitioning(bias_init, ("embed"))
         )
         self.k_proj = nnx.Linear(
             hidden_dim,
@@ -136,8 +134,8 @@ class Attention(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
-            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
+            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "kv")),
+            bias_init=nnx.with_partitioning(bias_init, ("embed"))
         )
         self.v_proj = nnx.Linear(
             hidden_dim,
@@ -145,8 +143,8 @@ class Attention(nnx.Module):
             use_bias=use_bias,
             dtype=dtype, 
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
-            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
+            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "kv")),
+            bias_init=nnx.with_partitioning(bias_init, ("embed"))
         )
 
         self.o_proj = nnx.Linear(
@@ -155,21 +153,21 @@ class Attention(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(proj_init, (None, shard_axis_name)),
-            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
+            kernel_init=nnx.with_partitioning(proj_init, ("q", "embed")),
+            bias_init=nnx.with_partitioning(bias_init, ("embed"))
             )
 
         if self.qk_norm:
             self.q_norm = nnx.RMSNorm(
                 head_dim,
                 dtype=jnp.float32,
-                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), (shard_axis_name,)),
+                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("embed")),
                 rngs=rngs
             )
             self.k_norm = nnx.RMSNorm(
                 head_dim,
                 dtype=jnp.float32,
-                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), (shard_axis_name,)),
+                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("embed")),
                 rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
@@ -195,7 +193,6 @@ class Attention(nnx.Module):
         if mask is not None:
             mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
             
-
         with jax.profiler.TraceAnnotation("attention"): # this does not work :/
             att = jax.nn.dot_product_attention(
                 query=q, key=k, value=v,

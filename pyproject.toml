@@ -8,7 +8,7 @@ dependencies = [
     "array-record>=0.7.2",
     "chz>=0.3.0",
     "datasets>=4.0.0",
-    "flax>=0.11.0",
+    "flax==0.12.0",
     "grain>=0.2.11",
     "ipykernel>=6.30.1",
     "matplotlib>=3.10.6",

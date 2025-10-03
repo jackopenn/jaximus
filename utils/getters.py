@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable
+from functools import partial
 from data.dummy import get_dummy_dataset
 from data.hf import get_hf_dataset
 from data.array_records import get_array_record_dataset
@@ -35,19 +36,18 @@ def get_dataset(config: DataConfig, batch_size: int):
         raise ValueError(f"Dataset {config} not found")
     
 
-def get_model(config: ModelConfig, seed: int, parallel: ParallelConfig):
-    shard_axis_name = "data" if parallel.data_parallel > 1 else None
+def get_partial_model(config: ModelConfig, seed: int):
     if isinstance(config, GPTConfig):
-        return GPT(config, nnx.Rngs(jax.random.PRNGKey(seed)))
+        return partial(GPT, config, nnx.Rngs(jax.random.PRNGKey(seed)))
     elif isinstance(config, Qwen3Config):
-        return Qwen3(config, nnx.Rngs(jax.random.PRNGKey(seed)))
+        return partial(Qwen3, config, nnx.Rngs(jax.random.PRNGKey(seed)))
     elif isinstance(config, LlamaConfig):
-        return Llama(config, rngs=nnx.Rngs(jax.random.PRNGKey(seed)), shard_axis_name=shard_axis_name)
+        return partial(Llama, config, nnx.Rngs(jax.random.PRNGKey(seed)))
     else:
         raise ValueError(f"Model {config} not found")
     
 
-def get_optimizer(model, config: OptimizerConfig):
+def get_optimizer_tx(config: OptimizerConfig):
     if config.name == "adamw":
         tx = optax.MultiSteps(
             optax.chain(
@@ -66,4 +66,4 @@ def get_optimizer(model, config: OptimizerConfig):
     else:
         raise ValueError(f"Optimizer {config} not found")
     
-    return nnx.Optimizer(model, tx, wrt=nnx.Param)
+    return tx
