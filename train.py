@@ -3,7 +3,7 @@ import os
 import chz
 from functools import partial
 from utils.common import get_gpu_peak_flops, get_nparams_and_flops
-from utils.getters import get_dataset, get_optimizer_tx, get_partial_model, get_partial_optimizer
+from utils.getters import get_dataset, get_optimizer_tx, get_partial_model
 from utils.configs import ExperimentConfig
 from utils.metric_logger import MetricLogger
 from generate import generate
@@ -53,7 +53,7 @@ def train(cfg: ExperimentConfig):
 
         model, optimizer = init_model_and_optimizer_with_sharding(partial_model, optimizer_tx, cfg.parallel)
 
-        data_sharding = NamedSharding(mesh, PartitionSpec("data", None, None))
+        data_sharding = NamedSharding(mesh, PartitionSpec("data", None))
         shard_batch = lambda batch: jax.tree_util.tree_map(lambda x: jax.device_put(x, data_sharding), batch)
         train_iter = (shard_batch(batch) for batch in dataset)
     else:

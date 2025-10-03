@@ -105,7 +105,7 @@ class Llama(nnx.Module):
             ),
             rngs=rngs,
         )
-        self.layers = [
+        self.layers = nnx.List([
             LlamaLayer(
                 hidden_dim=config.hidden_dim,
                 num_attention_heads=config.num_attention_heads,
@@ -121,7 +121,7 @@ class Llama(nnx.Module):
                 rngs=rngs
             )
             for _ in range(config.num_layers)
-        ]
+        ])
         self.lm_norm = nnx.RMSNorm(
             config.hidden_dim,
             dtype=jnp.float32,
