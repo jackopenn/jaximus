@@ -21,6 +21,7 @@ import orbax.checkpoint as ocp
 import re
 
 from utils.parallel import shard_model_and_optimizer
+d
 
 
 def pretty_print_samples(samples):
@@ -39,7 +40,7 @@ def train(cfg: ExperimentConfig):
     dataset = get_dataset(cfg.train_data, cfg.optimizer.batch_size)
     model = get_model(cfg.model, cfg.seed, cfg.parallel)
     optimizer = get_optimizer(model, cfg.optimizer)
-
+    
 
     if cfg.parallel:
         # shard the data and model

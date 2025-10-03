@@ -178,7 +178,7 @@ class Attention(nnx.Module):
         q = self.q_proj(x)
         k = self.k_proj(x)
         v = self.v_proj(x)
-
+        
         q = q.reshape(B, S, self.num_attention_heads, self.head_dim)
         k = k.reshape(B, S, self.num_key_value_heads, self.head_dim)
         v = v.reshape(B, S, self.num_key_value_heads, self.head_dim)
@@ -194,6 +194,7 @@ class Attention(nnx.Module):
 
         if mask is not None:
             mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
+            
 
         with jax.profiler.TraceAnnotation("attention"): # this does not work :/
             att = jax.nn.dot_product_attention(
