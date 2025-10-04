@@ -1,5 +1,7 @@
+from functools import partial
 import jax
 from jax import numpy as jnp
+from jax.sharding import PartitionSpec as P
 from flax import nnx
 from typing import Callable
 
@@ -7,6 +9,7 @@ from modelling.layers.position import apply_rope
 
 from jax.sharding import PartitionSpec
 
+from jax.experimental.pallas.ops.tpu import flash_attention
 
 class MLP(nnx.Module):
     def __init__(
@@ -182,6 +185,7 @@ class Attention(nnx.Module):
                 scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("norm",)),
                 rngs=rngs)
 
+    
     def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
 
         with jax.named_scope("q_proj"):
@@ -191,9 +195,9 @@ class Attention(nnx.Module):
         with jax.named_scope("v_proj"):
             v = self.v_proj(x)
 
-        q = jax.lax.with_sharding_constraint(q, PartitionSpec("data", None, None, None))
-        k = jax.lax.with_sharding_constraint(k, PartitionSpec("data", None, None, None))
-        v = jax.lax.with_sharding_constraint(v, PartitionSpec("data", None, None, None))
+        q = jax.lax.with_sharding_constraint(q, P("data", None, None, None))
+        k = jax.lax.with_sharding_constraint(k, P("data", None, None, None))
+        v = jax.lax.with_sharding_constraint(v, P("data", None, None, None))
 
         if self.qk_norm:
             with jax.named_scope("qk_norm"):
@@ -206,17 +210,39 @@ class Attention(nnx.Module):
                 q = apply_rope(q, positions, base_frequency=self.rope_theta)
                 k = apply_rope(k, positions, base_frequency=self.rope_theta)
 
-        if mask is not None:
-            with jax.named_scope("make_mask"):
-                mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
-
+        # if mask is not None:
+        #     with jax.named_scope("make_mask"):
+        #         mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
+        
+        with jax.named_scope("repeat_kv_and_swap_axes"):
+            k = jnp.repeat(k, self.num_attention_heads // self.num_key_value_heads, axis=2)
+            v = jnp.repeat(v, self.num_attention_heads // self.num_key_value_heads, axis=2)
+            
+            q = jnp.swapaxes(q, 1, 2)
+            k = jnp.swapaxes(k, 1, 2)
+            v = jnp.swapaxes(v, 1, 2)
+        
         with jax.named_scope("attention"):
-            att = jax.nn.dot_product_attention(
-                query=q, key=k, value=v,
-                is_causal=True,
-                implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
-                mask=mask
-            )
+            # att = jax.nn.dot_product_attention(
+            #     query=q, key=k, value=v,
+            #     is_causal=True,
+            #     implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
+            #     mask=mask
+            # )
+            att = jax.shard_map(
+                flash_attention.flash_attention,
+                in_specs=(
+                    P("data", None, None, None),
+                    P("data", None, None, None),
+                    P("data", None, None, None)
+                ),
+                out_specs=P("data", None, None, None),
+                check_vma=False
+            )(q, k, v)
+
+            
+
+        att = jnp.swapaxes(att, 1, 2)
 
         with jax.named_scope("o_proj"):
             out = self.o_proj(att)
