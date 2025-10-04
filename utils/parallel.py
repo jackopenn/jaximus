@@ -30,15 +30,15 @@ REPL_SHARDING_RULES = (
 FSDP_SHARDING_RULES = (
     ("batch", "data"),
     # embed
-    ("vocab", None),
-    ("vocab_embed", "data"),
+    ("vocab", "data"),
+    ("vocab_embed", None),
     # attention
     ("qkv_embed", "data"),
     ("q_heads", None),
     ("kv_heads", None),
     ("head_dim", None),
-    ("o_heads", "data"),
-    ("o_embed", None),
+    ("o_heads", None),
+    ("o_embed", "data"),
     # mlp
     ("mlp_up_embed", "data"),
     ("mlp_up_intermediate", None),
@@ -47,6 +47,27 @@ FSDP_SHARDING_RULES = (
     # norm
     ("norm", None), # not sure about this  - but they are small
 )
+
+# FSDP_TRANSPOSE_SHARDING_RULES = (
+#     ("batch", "data"),
+#     # embed
+#     ("vocab", "data"),
+#     ("vocab_embed", None),
+#     # attention
+#     ("qkv_embed", None),
+#     ("q_heads", None),
+#     ("kv_heads", None),
+#     ("head_dim", "data"),
+#     ("o_heads", None),
+#     ("o_embed", None),
+#     # mlp
+#     ("mlp_up_embed", None),
+#     ("mlp_up_intermediate", "data"),
+#     ("mlp_down_intermediate", "data"),
+#     ("mlp_down_embed", None),
+#     # norm
+#     ("norm", None), # not sure about this  - but they are small
+# )
 
 
 def make_and_set_mesh(cfg):

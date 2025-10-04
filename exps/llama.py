@@ -1,10 +1,10 @@
 import os 
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.98"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
 os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "false"
 
 # no difference
-os.environ['XLA_FLAGS'] = "--xla_gpu_enable_latency_hiding_scheduler=true"
+os.environ['XLA_FLAGS'] = "--xla_gpu_enable_latency_hiding_scheduler=true" # --xla_gpu_enable_command_buffer='' "
 
 #   --xla_gpu_enable_while_loop_double_buffering=true does nothing
 
@@ -13,12 +13,14 @@ os.environ['XLA_FLAGS'] = "--xla_gpu_enable_latency_hiding_scheduler=true"
 # os.environ["NCCL_PROTO"] = "SIMPLE,LL,LL128"
 # os.environ["NCCL_NVLS_ENABLE"] = "1"  
 
-os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
-os.environ["NCCL_NTHREADS"] = "2"              # Reduce NCCL worker threads  
-os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
+# os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
+# os.environ["NCCL_NTHREADS"] = "32"              # Reduce NCCL worker threads  
+# os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
 # os.environ["NCCL_MIN_NCHANNELS"] = "2"         # Force minimal channels
 # os.environ["NCCL_P2P_DISABLE"] = "0"           # Keep P2P but reduce memory
 # os.environ["NCCL_SHM_DISABLE"] = "1"
+# 
+# os.environ["NCCL_DEBUG"] = "INFO"
 
 
 from dataclasses import dataclass, field
@@ -34,7 +36,7 @@ from utils.configs import DataConfig, DummyDataConfig, HFDataConfig, OptimizerCo
 
 sequence_length = 4096
 n_gpu = 8
-micro_batch_size = 2
+micro_batch_size = 8
 accum_steps = 1
 gpu_name = "H100"
 
@@ -82,7 +84,7 @@ optim_config = OptimizerConfig(
 
 parallel_config = ParallelConfig(
     data_parallel=n_gpu,
-    zero_stage=0
+    zero_stage=3
 )
     
 

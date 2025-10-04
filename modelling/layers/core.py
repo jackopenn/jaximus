@@ -5,6 +5,8 @@ from typing import Callable
 
 from modelling.layers.position import apply_rope
 
+from jax.sharding import PartitionSpec
+
 
 class MLP(nnx.Module):
     def __init__(
@@ -163,7 +165,8 @@ class Attention(nnx.Module):
             dtype=dtype,
             rngs=rngs,
             kernel_init=nnx.with_partitioning(proj_init, ("o_heads", "head_dim", "o_embed")),
-            bias_init=nnx.with_partitioning(bias_init, ("head_dim"))
+            bias_init=nnx.with_partitioning(bias_init, ("o_embed",)),
+            axis=(-2, -1)
             )
 
         if self.qk_norm:
@@ -187,6 +190,10 @@ class Attention(nnx.Module):
             k = self.k_proj(x)
         with jax.named_scope("v_proj"):
             v = self.v_proj(x)
+
+        q = jax.lax.with_sharding_constraint(q, PartitionSpec("data", None, None, None))
+        k = jax.lax.with_sharding_constraint(k, PartitionSpec("data", None, None, None))
+        v = jax.lax.with_sharding_constraint(v, PartitionSpec("data", None, None, None))
 
         if self.qk_norm:
             with jax.named_scope("qk_norm"):
