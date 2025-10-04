@@ -5,22 +5,47 @@ from flax import nnx
 
 
 REPL_SHARDING_RULES = (
-    ('batch', 'data'),
+    ("batch", "data"),
+
+    # embed
     ("vocab", None),
-    ('embed', None),
-    ('intermediate', None),
-    ("q", None),
-    ("kv", None),
+    ("vocab_embed", None),
+    # attention
+    ("qkv_embed", None),
+    ("q_heads", None),
+    ("kv_heads", None),
+    ("head_dim", None),
+    ("o_heads", None),
+    ("o_embed", None),
+    # mlp
+    ("mlp_up_embed", None),
+    ("mlp_up_intermediate", None),
+    ("mlp_down_intermediate", None),
+    ("mlp_down_embed", None),
+    # norm
+    ("norm", None),
 )
 
 
 FSDP_SHARDING_RULES = (
-    ('batch', 'data'),
-    ("vocab", "data"),
-    ('embed', None),
-    ('intermediate', "data"),
-    ("q", "data"),
-    ("kv", "data"),
+    ("batch", "data"),
+    # embed
+    ("vocab", None),
+    ("vocab_embed", "data"),
+    # attention
+    ("qkv_embed", "data"),
+    ("q_heads", None),
+    ("kv_heads", None),
+    ("head_dim", None),
+    ("o_heads", "data"),
+    ("o_embed", None),
+    # mlp
+    ("mlp_up_embed", "data"),
+    ("mlp_up_intermediate", None),
+    ("mlp_down_intermediate", None),
+    ("mlp_down_embed", "data"),
+    # norm
+    ("norm", None), # not sure about this  - but they are small
 )
 
 

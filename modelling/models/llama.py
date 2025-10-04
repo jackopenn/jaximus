@@ -63,7 +63,7 @@ class LlamaLayer(nnx.Module):
             dtype=jnp.float32,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                ("embed",)
+                ("norm",)
             ),
             rngs=rngs
             )
@@ -80,14 +80,27 @@ class LlamaLayer(nnx.Module):
             dtype=jnp.float32,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                ("embed",)
+                ("norm",)
             ),
             rngs=rngs
         )
 
     def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        x = x + self.attention(self.norm_1(x), mask=mask)
-        x = x + self.mlp(self.norm_2(x))
+        # x = x + self.attention(self.norm_1(x), mask=mask)
+        # x = x + self.mlp(self.norm_2(x))
+        # return x
+        
+        with jax.named_scope("pre_att_norm"):
+            z = self.norm_1(x)
+        z = self.attention(z, mask=mask)
+        with jax.named_scope("residual"):
+            x = x + z
+        
+        with jax.named_scope("pre_mlp_norm"):
+            z = self.norm_2(x)
+        z = self.mlp(z)
+        with jax.named_scope("residual"):
+            x = x + z
         return x
 
 
@@ -101,7 +114,7 @@ class Llama(nnx.Module):
             dtype=config.dtype,
             embedding_init=nnx.with_partitioning(
                 nnx.initializers.normal(stddev=0.02),
-                ("vocab", "embed")
+                ("vocab", "vocab_embed")
             ),
             rngs=rngs,
         )
@@ -127,15 +140,22 @@ class Llama(nnx.Module):
             dtype=jnp.float32,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                ("embed",)
+                ("norm",)
             ),
             rngs=rngs
         )
             
     def __call__(self, input_ids: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        x = self.token_embedding(input_ids)
+        with jax.named_scope("embed"):
+            x = self.token_embedding(input_ids)
+            
         for layer in self.layers:
             x = layer(x, mask)
-        x = self.lm_norm(x)
-        return self.token_embedding.attend(x)
+        
+        with jax.named_scope("lm_norm"):
+            x = self.lm_norm(x)
+        
+        with jax.named_scope("attend"):
+            out = self.token_embedding.attend(x)
+        return out
     

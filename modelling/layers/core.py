@@ -68,8 +68,8 @@ class GLU(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "intermediate")),
-            bias_init=nnx.with_partitioning(bias_init, ("embed"))
+            kernel_init=nnx.with_partitioning(kernel_init, ("mlp_up_embed", "mlp_up_intermediate")),
+            bias_init=nnx.with_partitioning(bias_init, ("mlp_up_embed"))
         )
         self.gate_proj = nnx.Linear(
             hidden_dim,
@@ -77,8 +77,8 @@ class GLU(nnx.Module):
             use_bias=use_bias, 
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "intermediate")),
-            bias_init=nnx.with_partitioning(bias_init, ("embed"))
+            kernel_init=nnx.with_partitioning(kernel_init, ("mlp_up_embed", "mlp_up_intermediate")),
+            bias_init=nnx.with_partitioning(bias_init, ("mlp_up_embed"))
         )
         self.down_proj = nnx.Linear(
             intermediate_dim,
@@ -86,13 +86,21 @@ class GLU(nnx.Module):
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(proj_init, ("intermediate", "embed")),
-            bias_init=nnx.with_partitioning(bias_init, ("intermediate"))
+            kernel_init=nnx.with_partitioning(proj_init, ("mlp_down_intermediate", "mlp_down_embed")),
+            bias_init=nnx.with_partitioning(bias_init, ("mlp_down_intermediate"))
         )
         self.act_fn = act_fn
 
+
     def __call__(self, x):
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        # return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        with jax.named_scope("glu_up"):
+            up = self.up_proj(x)
+        with jax.named_scope("glu_gate"):
+            gate = self.act_fn(self.gate_proj(x))
+        with jax.named_scope("glu_down"):
+            out = self.down_proj(gate * up)
+        return out
 
 
 class Attention(nnx.Module):
@@ -121,80 +129,81 @@ class Attention(nnx.Module):
         self.use_bias = use_bias
         self.dtype = dtype
 
-        self.q_proj = nnx.Linear(
+        self.q_proj = nnx.LinearGeneral(
             hidden_dim,
-            num_attention_heads * head_dim,
+            (num_attention_heads, head_dim),
             use_bias=use_bias,
             dtype=dtype, rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "q")),
-            bias_init=nnx.with_partitioning(bias_init, ("embed"))
+            kernel_init=nnx.with_partitioning(kernel_init, ("qkv_embed", "q_heads", "head_dim")),
+            bias_init=nnx.with_partitioning(bias_init, ("q_heads", "head_dim"))
         )
-        self.k_proj = nnx.Linear(
+        self.k_proj = nnx.LinearGeneral(
             hidden_dim,
-            num_key_value_heads * head_dim,
+            (num_key_value_heads, head_dim),
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "kv")),
-            bias_init=nnx.with_partitioning(bias_init, ("embed"))
+            kernel_init=nnx.with_partitioning(kernel_init, ("qkv_embed", "kv_heads", "head_dim")),
+            bias_init=nnx.with_partitioning(bias_init, ("kv_heads", "head_dim"))
         )
-        self.v_proj = nnx.Linear(
+        self.v_proj = nnx.LinearGeneral(
             hidden_dim,
-            num_key_value_heads * head_dim, 
+            (num_key_value_heads, head_dim), 
             use_bias=use_bias,
             dtype=dtype, 
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("embed", "kv")),
-            bias_init=nnx.with_partitioning(bias_init, ("embed"))
+            kernel_init=nnx.with_partitioning(kernel_init, ("qkv_embed", "kv_heads", "head_dim")),
+            bias_init=nnx.with_partitioning(bias_init, ("kv_heads", "head_dim"))
         )
 
-        self.o_proj = nnx.Linear(
-            num_attention_heads * head_dim,
+        self.o_proj = nnx.LinearGeneral(
+            (num_attention_heads, head_dim),
             hidden_dim,
             use_bias=use_bias,
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(proj_init, ("q", "embed")),
-            bias_init=nnx.with_partitioning(bias_init, ("embed"))
+            kernel_init=nnx.with_partitioning(proj_init, ("o_heads", "head_dim", "o_embed")),
+            bias_init=nnx.with_partitioning(bias_init, ("head_dim"))
             )
 
         if self.qk_norm:
             self.q_norm = nnx.RMSNorm(
                 head_dim,
                 dtype=jnp.float32,
-                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("embed")),
+                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("norm",)),
                 rngs=rngs
             )
             self.k_norm = nnx.RMSNorm(
                 head_dim,
                 dtype=jnp.float32,
-                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("embed")),
+                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("norm",)),
                 rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        B, S, D = x.shape
 
-        q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
-        
-        q = q.reshape(B, S, self.num_attention_heads, self.head_dim)
-        k = k.reshape(B, S, self.num_key_value_heads, self.head_dim)
-        v = v.reshape(B, S, self.num_key_value_heads, self.head_dim)
+        with jax.named_scope("q_proj"):
+            q = self.q_proj(x)
+        with jax.named_scope("k_proj"):
+            k = self.k_proj(x)
+        with jax.named_scope("v_proj"):
+            v = self.v_proj(x)
 
         if self.qk_norm:
-            q = self.q_norm(q).astype(self.dtype)
-            k = self.k_norm(k).astype(self.dtype)
+            with jax.named_scope("qk_norm"):
+                q = self.q_norm(q).astype(self.dtype)
+                k = self.k_norm(k).astype(self.dtype)
 
         if self.rope_theta:
-            positions = jnp.arange(S)[None, :]
-            q = apply_rope(q, positions, base_frequency=self.rope_theta)
-            k = apply_rope(k, positions, base_frequency=self.rope_theta)
+            with jax.named_scope("rope"):
+                positions = jnp.arange(x.shape[1])[None, :]
+                q = apply_rope(q, positions, base_frequency=self.rope_theta)
+                k = apply_rope(k, positions, base_frequency=self.rope_theta)
 
         if mask is not None:
-            mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
-            
-        with jax.profiler.TraceAnnotation("attention"): # this does not work :/
+            with jax.named_scope("make_mask"):
+                mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
+
+        with jax.named_scope("attention"):
             att = jax.nn.dot_product_attention(
                 query=q, key=k, value=v,
                 is_causal=True,
@@ -202,6 +211,9 @@ class Attention(nnx.Module):
                 mask=mask
             )
 
-        return self.o_proj(att.reshape(B, S, -1))
+        with jax.named_scope("o_proj"):
+            out = self.o_proj(att)
+
+        return out
     
 
