@@ -23,9 +23,9 @@ from utils.configs import DataConfig, DummyDataConfig, HFDataConfig, OptimizerCo
 
 sequence_length = 4096
 n_gpu = 4
-micro_batch_size = 1
+micro_batch_size = 8
 accum_steps = 1
-gpu_name = "v6e"
+gpu_name = "v5p"
 
 model_config = LlamaConfig(
     vocab_size=128256,
@@ -44,7 +44,6 @@ model_config = LlamaConfig(
     dtype=jnp.bfloat16,
 )
 
-# train_data = DummyDataConfig(
 train_data = HFDataConfig(
     hf_name=["HuggingFaceFW/fineweb-edu", "sample-10BT"],
     tokenizer_name="meta-llama/Llama-3.1-8B-Instruct",

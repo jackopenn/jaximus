@@ -10,6 +10,7 @@ from modelling.layers.position import apply_rope
 from jax.sharding import PartitionSpec
 
 from jax.experimental.pallas.ops.tpu import flash_attention
+from jax.experimental.pallas.ops.tpu import splash_attention
 
 class MLP(nnx.Module):
     def __init__(
@@ -185,7 +186,16 @@ class Attention(nnx.Module):
                 scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("norm",)),
                 rngs=rngs)
 
-    
+    def _splash_attention_fn(self):
+        # mask = splash_attention.make_causal_mask((4096, 4096))[None, :, :]
+        mask=splash_attention.CausalMask((4096, 4096))
+        return splash_attention.make_splash_mha(
+            mask=splash_attention.MultiHeadMask(masks=(mask,) * 32),
+            head_shards=1,
+            q_seq_shards=1
+        )
+
+
     def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
 
         with jax.named_scope("q_proj"):
@@ -230,15 +240,58 @@ class Attention(nnx.Module):
             #     mask=mask
             # )
             att = jax.shard_map(
-                flash_attention.flash_attention,
+                partial(
+                    flash_attention.flash_attention,
+                    causal=True,
+                    block_sizes=flash_attention.BlockSizes(
+                        # block_q=256,
+                        # block_k_major=512,
+                        # block_k=256,
+                        # block_b=2,
+
+                        # block_q_major_dkv=256,
+                        # block_k_major_dkv=512,
+                        # block_k_dkv=256,
+                        # block_q_dkv=256,
+
+                        # block_k_major_dq=512,
+                        # block_k_dq=256,
+                        # block_q_dq=256,
+
+                        block_q=512,
+                        block_k_major=1024,
+                        block_k=512,
+                        block_b=4,
+
+                        block_q_major_dkv=512,
+                        block_k_major_dkv=1024,
+                        block_k_dkv=512,
+                        block_q_dkv=512,
+
+                        block_k_major_dq=1024,
+                        block_k_dq=512,
+                        block_q_dq=512,
+                    )
+                ),
                 in_specs=(
                     P("data", None, None, None),
                     P("data", None, None, None),
-                    P("data", None, None, None)
+                    P("data", None, None, None),
                 ),
                 out_specs=P("data", None, None, None),
                 check_vma=False
             )(q, k, v)
+            
+            # att = jax.shard_map(
+            #     jax.vmap(self._splash_attention_fn(), in_axes=(0, 0, 0)),
+            #     in_specs=(
+            #         P("data", None, None, None),
+            #         P("data", None, None, None),
+            #         P("data", None, None, None)
+            #     ),
+            #     out_specs=P("data", None, None, None),
+            #     check_vma=False
+            # )(q, k, v)
 
             
 

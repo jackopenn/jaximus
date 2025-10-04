@@ -34,5 +34,7 @@ def get_gpu_peak_flops(gpu_name):
         return 104.8 * 1e12
     elif gpu_name == "v6e":
         return 918e12
+    elif gpu_name == "v5p":
+        return 459e12
     else:
         raise ValueError(f"don't have peak flops for {gpu_name}")
