@@ -121,6 +121,8 @@ class Attention(nnx.Module):
         use_bias: bool,
         dtype: jnp.dtype, 
         rngs: jnp.ndarray,
+        sliding_window: int | None = None,
+        attn_logit_softcapping: float | None = None,
         kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
         bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
         proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
@@ -186,13 +188,24 @@ class Attention(nnx.Module):
                 scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("norm",)),
                 rngs=rngs)
 
-    def _splash_attention_fn(self):
-        # mask = splash_attention.make_causal_mask((4096, 4096))[None, :, :]
-        mask=splash_attention.CausalMask((4096, 4096))
+        # TODO: add support for attn_logit_softcapping on non-TPU
+        if jax.default_backend() != "tpu" and self.attn_logit_softcapping is not None:
+            raise ValueError("attn_logit_softcapping is not supported on non-TPU")
+
+    def _splash_attention_fn(self, seq_len: int):
+        mask=splash_attention.CausalMask((seq_len, seq_len))
+
+        if self.sliding_window:
+            sliding_window_mask=splash_attention.SlidingWindowMask((seq_len, seq_len))
+            mask = splash_attention.LogicalAnd(mask, sliding_window_mask)
+
+        mask=splash_attention.MultiHeadMask(masks=(mask,) * self.num_attention_heads),
+
         return splash_attention.make_splash_mha(
-            mask=splash_attention.MultiHeadMask(masks=(mask,) * 32),
+            mask=mask,
             head_shards=1,
-            q_seq_shards=1
+            q_seq_shards=1,
+            attn_logit_soft_cap=self.attn_logit_softcapping
         )
 
 
@@ -205,10 +218,6 @@ class Attention(nnx.Module):
         with jax.named_scope("v_proj"):
             v = self.v_proj(x)
 
-        q = jax.lax.with_sharding_constraint(q, P("data", None, None, None))
-        k = jax.lax.with_sharding_constraint(k, P("data", None, None, None))
-        v = jax.lax.with_sharding_constraint(v, P("data", None, None, None))
-
         if self.qk_norm:
             with jax.named_scope("qk_norm"):
                 q = self.q_norm(q).astype(self.dtype)
@@ -219,83 +228,77 @@ class Attention(nnx.Module):
                 positions = jnp.arange(x.shape[1])[None, :]
                 q = apply_rope(q, positions, base_frequency=self.rope_theta)
                 k = apply_rope(k, positions, base_frequency=self.rope_theta)
-
-        # if mask is not None:
-        #     with jax.named_scope("make_mask"):
-        #         mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
         
-        with jax.named_scope("repeat_kv_and_swap_axes"):
-            k = jnp.repeat(k, self.num_attention_heads // self.num_key_value_heads, axis=2)
-            v = jnp.repeat(v, self.num_attention_heads // self.num_key_value_heads, axis=2)
-            
-            q = jnp.swapaxes(q, 1, 2)
-            k = jnp.swapaxes(k, 1, 2)
-            v = jnp.swapaxes(v, 1, 2)
         
-        with jax.named_scope("attention"):
-            # att = jax.nn.dot_product_attention(
-            #     query=q, key=k, value=v,
-            #     is_causal=True,
-            #     implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
-            #     mask=mask
-            # )
-            att = jax.shard_map(
-                partial(
-                    flash_attention.flash_attention,
-                    causal=True,
-                    block_sizes=flash_attention.BlockSizes(
-                        # block_q=256,
-                        # block_k_major=512,
-                        # block_k=256,
-                        # block_b=2,
+        if jax.default_backend() == "tpu":
+            q = jax.lax.with_sharding_constraint(q, P("data", None, None, None))
+            k = jax.lax.with_sharding_constraint(k, P("data", None, None, None))
+            v = jax.lax.with_sharding_constraint(v, P("data", None, None, None))
 
-                        # block_q_major_dkv=256,
-                        # block_k_major_dkv=512,
-                        # block_k_dkv=256,
-                        # block_q_dkv=256,
+            with jax.named_scope("repeat_kv_and_swap_axes"):
+                k = jnp.repeat(k, self.num_attention_heads // self.num_key_value_heads, axis=2)
+                v = jnp.repeat(v, self.num_attention_heads // self.num_key_value_heads, axis=2)
+                
+                q = jnp.swapaxes(q, 1, 2)
+                k = jnp.swapaxes(k, 1, 2)
+                v = jnp.swapaxes(v, 1, 2)
 
-                        # block_k_major_dq=512,
-                        # block_k_dq=256,
-                        # block_q_dq=256,
+            with jax.named_scope("attention"):
+            #     att = jax.shard_map(
+            #     partial(
+            #         flash_attention.flash_attention,
+            #         causal=True,
+            #         block_sizes=flash_attention.BlockSizes(
+            #             block_q=512,
+            #             block_k_major=1024,
+            #             block_k=512,
+            #             block_b=4,
 
-                        block_q=512,
-                        block_k_major=1024,
-                        block_k=512,
-                        block_b=4,
+            #             block_q_major_dkv=512,
+            #             block_k_major_dkv=1024,
+            #             block_k_dkv=512,
+            #             block_q_dkv=512,
 
-                        block_q_major_dkv=512,
-                        block_k_major_dkv=1024,
-                        block_k_dkv=512,
-                        block_q_dkv=512,
-
-                        block_k_major_dq=1024,
-                        block_k_dq=512,
-                        block_q_dq=512,
-                    )
-                ),
-                in_specs=(
-                    P("data", None, None, None),
-                    P("data", None, None, None),
-                    P("data", None, None, None),
-                ),
-                out_specs=P("data", None, None, None),
-                check_vma=False
-            )(q, k, v)
-            
-            # att = jax.shard_map(
-            #     jax.vmap(self._splash_attention_fn(), in_axes=(0, 0, 0)),
+            #             block_k_major_dq=1024,
+            #             block_k_dq=512,
+            #             block_q_dq=512,
+            #         )
+            #     ),
             #     in_specs=(
             #         P("data", None, None, None),
             #         P("data", None, None, None),
-            #         P("data", None, None, None)
+            #         P("data", None, None, None),
             #     ),
             #     out_specs=P("data", None, None, None),
             #     check_vma=False
             # )(q, k, v)
-
+                att = jax.vmap(
+                        jax.shard_map(
+                            partial(self._splash_attention_fn, seq_len=x.shape[1]),
+                            in_specs=(
+                                P("data", None, None, None),
+                                P("data", None, None, None),
+                                P("data", None, None, None),
+                            ),
+                            out_specs=P("data", None, None, None),
+                            check_vma=False
+                        ),
+                        in_axes=(0, 0, 0)
+                    )(q, k, v)
             
-
-        att = jnp.swapaxes(att, 1, 2)
+            att = jnp.swapaxes(att, 1, 2)
+        else:
+            if mask is not None:
+                with jax.named_scope("make_mask"):
+                    mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
+            with jax.named_scope("attention"):
+                att = jax.nn.dot_product_attention(
+                    query=q, key=k, value=v,
+                    is_causal=True,
+                    implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
+                    mask=mask,
+                    local_window_size=(self.sliding_window,)
+                )
 
         with jax.named_scope("o_proj"):
             out = self.o_proj(att)

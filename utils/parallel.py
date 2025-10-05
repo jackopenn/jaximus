@@ -45,6 +45,7 @@ FSDP_SHARDING_RULES = (
     ("mlp_down_intermediate", None),
     ("mlp_down_embed", "data"),
     # norm
+    
     ("norm", None), # not sure about this  - but they are small
 )
 
