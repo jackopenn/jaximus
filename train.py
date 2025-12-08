@@ -1,16 +1,16 @@
 import time
 import os
-import chz
 from functools import partial
+from data.hf import get_hf_dataset
 from utils.common import get_gpu_peak_flops, get_nparams_and_flops
-from utils.getters import get_dataset, get_optimizer_tx, get_partial_model
-from utils.configs import ExperimentConfig
 from utils.metric_logger import MetricLogger
 from generate import generate
+from modelling.model import Model
 from transformers import AutoTokenizer
 import jax
 from jax import numpy as jnp
 from jax.sharding import Mesh, PartitionSpec, NamedSharding
+from sws import run
 
 from flax import nnx
 import optax
@@ -31,7 +31,7 @@ def pretty_print_samples(samples):
             print(f"sample {i}: {clean}")
         print()
 
-def train(cfg: ExperimentConfig):
+def train(cfg):
     profiler_options = jax.profiler.ProfileOptions()
     profiler_options.host_tracer_level = 3
 
@@ -39,11 +39,40 @@ def train(cfg: ExperimentConfig):
     profiler_options.gpu_enable_cupti_activity_graph_trace = True
     profiler_options.gpu_dump_graph_node_mapping = True
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.train_data.tokenizer_name)
-    dataset = get_dataset(cfg.train_data, cfg.optimizer.batch_size)
-    partial_model = get_partial_model(cfg.model, cfg.seed)
-    optimizer_tx = get_optimizer_tx(cfg.optimizer)
-    
+    tokenizer = AutoTokenizer.from_pretrained(cfg.data.tokenizer_name)
+
+    dataset = get_hf_dataset(
+        hf_name=cfg.data.hf_name,
+        sequence_length=cfg.data.max_length,
+        batch_size=cfg.data.batch_size,
+        tokenizer_name=cfg.data.tokenizer_name,
+        streaming=True,
+        num_proc=None,
+    )
+
+    print(cfg.model)
+    partial_model = partial(Model, config=cfg.model, rngs=nnx.Rngs(cfg.seed))
+
+    tx = optax.MultiSteps(
+            optax.chain(
+                optax.clip_by_global_norm(cfg.optim.grad_clip),
+                optax.adamw(
+                    learning_rate=optax.warmup_cosine_decay_schedule(
+                        init_value=cfg.optim.schedule.init_value,
+                        peak_value=cfg.optim.schedule.peak_value,
+                        warmup_steps=cfg.optim.schedule.warmup_steps,
+                        decay_steps=cfg.optim.schedule.decay_steps,
+                        end_value=cfg.optim.schedule.end_value,
+                    ),
+                    weight_decay=cfg.optim.weight_decay,
+                    b1=cfg.optim.betas[0],
+                    b2=cfg.optim.betas[1],
+                    eps=cfg.optim.eps,
+                    mask=lambda params: jax.tree.map(lambda x: x.ndim != 1, params), # only wd for 2d tensors
+                )
+            ),
+            every_k_schedule=cfg.optim.accum_steps,
+        )
 
     if cfg.parallel:
         # shard the data and model
@@ -55,14 +84,14 @@ def train(cfg: ExperimentConfig):
 
         mesh = make_and_set_mesh(cfg.parallel)
 
-        model, optimizer = init_model_and_optimizer_with_sharding(partial_model, optimizer_tx, cfg.parallel)
+        model, optimizer = init_model_and_optimizer_with_sharding(partial_model, tx, cfg.parallel)
 
         data_sharding = NamedSharding(mesh, PartitionSpec("data", None))
         shard_batch = lambda batch: jax.tree_util.tree_map(lambda x: jax.device_put(x, data_sharding), batch)
         train_iter = (shard_batch(batch) for batch in dataset)
     else:
         model = partial_model()
-        optimizer = nnx.Optimizer(model, optimizer_tx, wrt=nnx.Param)
+        optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
         train_iter = iter(dataset)
 
 
@@ -116,12 +145,12 @@ def train(cfg: ExperimentConfig):
 
 
     train_logger = MetricLogger(
-        batch_size=cfg.optimizer.batch_size,
-        accum_steps=cfg.optimizer.accum_steps,
-        sequence_length=cfg.train_data.max_length,
+        batch_size=cfg.optim.batch_size,
+        accum_steps=cfg.optim.accum_steps,
+        sequence_length=cfg.data.max_length,
         n_flops_per_token=nflops_per_token,
         gpu_name=cfg.gpu,
-        optimizer_scheduler=cfg.optimizer.lr,
+        optimizer_scheduler=cfg.optim.schedule,
         wandb=wandb,
     )
 
@@ -134,10 +163,10 @@ def train(cfg: ExperimentConfig):
     micro_step = 0
     t0 = time.time()
 
-    while step <= cfg.steps:
+    while step <= cfg.max_steps:
 
         if micro_step == cfg.start_trace_micro_step:
-            jax.profiler.start_trace(cfg.trace_dir, profiler_options=profiler_options)
+            jax.profiler.start_trace(cfg.profile_dir, profiler_options=profiler_options)
         
         batch = next(train_iter)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
@@ -148,7 +177,7 @@ def train(cfg: ExperimentConfig):
 
         micro_step += 1
 
-        if micro_step % cfg.optimizer.accum_steps == 0:
+        if micro_step % cfg.optim.accum_steps == 0:
             step_time = time.time() - t0
             t0 = time.time()
 
@@ -172,4 +201,4 @@ def train(cfg: ExperimentConfig):
             
 
 if __name__ == "__main__":
-    chz.nested_entrypoint(train)
+    run(train)

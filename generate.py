@@ -3,7 +3,6 @@ from functools import partial
 import jax
 from jax import numpy as jnp
 from flax import nnx
-from modelling.models.gpt import GPT, GPTConfig
 from transformers import AutoTokenizer
 import wandb
 import orbax.checkpoint as ocp
@@ -87,111 +86,112 @@ def generate(
 
 
 if __name__ == "__main__":
+    print("TODO: add generation")
     
-    # weight_path = "jackpenn/transformers/run_vckuuoa9_model:v11"
+    # # weight_path = "jackpenn/transformers/run_vckuuoa9_model:v11"
     
-    # run = wandb.init(project="transformers")
-    # artifact = run.use_artifact(weight_path, type='model')
-    # weight_path = artifact.download()
+    # # run = wandb.init(project="transformers")
+    # # artifact = run.use_artifact(weight_path, type='model')
+    # # weight_path = artifact.download()
     
-    weight_path = "/Users/jack/projects/jaximus/artifacts/run_vckuuoa9_model:v11"
+    # weight_path = "/Users/jack/projects/jaximus/artifacts/run_vckuuoa9_model:v11"
 
-    model_config = GPTConfig(
-        vocab_size=50304,
-        hidden_dim=768,
-        num_layers=12,
-        num_attention_heads=12,
-        intermediate_dim=3072,
-        head_dim=64,
-        act_fn=nnx.gelu,
-        max_seq_len=1024,
-        layer_norm_epsilon=1e-5,
-        use_bias=False,
-        dtype=jnp.bfloat16,
-    )
+    # model_config = GPTConfig(
+    #     vocab_size=50304,
+    #     hidden_dim=768,
+    #     num_layers=12,
+    #     num_attention_heads=12,
+    #     intermediate_dim=3072,
+    #     head_dim=64,
+    #     act_fn=nnx.gelu,
+    #     max_seq_len=1024,
+    #     layer_norm_epsilon=1e-5,
+    #     use_bias=False,
+    #     dtype=jnp.bfloat16,
+    # )
 
-    ckpt = ocp.StandardCheckpointer()
-    abstract_model = nnx.eval_shape(lambda: GPT(model_config, nnx.Rngs(jax.random.PRNGKey(0))))
-    graphdef, abstract_state = nnx.split(abstract_model)
+    # ckpt = ocp.StandardCheckpointer()
+    # abstract_model = nnx.eval_shape(lambda: GPT(model_config, nnx.Rngs(jax.random.PRNGKey(0))))
+    # graphdef, abstract_state = nnx.split(abstract_model)
 
-    sharding = jax.sharding.NamedSharding(
-        jax.sharding.Mesh(jax.devices(), ('data',)),
-        jax.sharding.PartitionSpec(),
-    )
-    sharded_abstract_state = jax.tree_util.tree_map(lambda x: x.update(sharding=sharding), abstract_state)
+    # sharding = jax.sharding.NamedSharding(
+    #     jax.sharding.Mesh(jax.devices(), ('data',)),
+    #     jax.sharding.PartitionSpec(),
+    # )
+    # sharded_abstract_state = jax.tree_util.tree_map(lambda x: x.update(sharding=sharding), abstract_state)
 
-    state_restored = ckpt.restore(weight_path + f"/default", sharded_abstract_state)
-    model = nnx.merge(graphdef, state_restored)
+    # state_restored = ckpt.restore(weight_path + f"/default", sharded_abstract_state)
+    # model = nnx.merge(graphdef, state_restored)
 
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    questions = [
-        "Who wrote the book the origin of species?",
-        "Who is the founder of the ubuntu project?",
-        "Who is the quarterback for the green bay packers?",
-        "Panda is a national animal of which country?",
-        "Who came up with the theory of relativity?",
-        "When was the first star wars film released?",
-        "What is the most common blood type in sweden?",
-        "Who is regarded as the founder of psychoanalysis?",
-        "Who took the first steps on the moon in 1969?",
-        "Who is the largest supermarket chain in the uk?",
-        "What is the meaning of shalom in english?",
-        "Who was the author of the art of war?",
-        "Largest state in the us by land mass?",
-        "Green algae is an example of which type of reproduction?",
-        "Vikram samvat calender is official in which country?",
-        "Who is mostly responsible for writing the declaration of independence?",
-        "What us state forms the western boundary of montana?",
-        "Who plays ser davos in game of thrones?",
-        "Who appoints the chair of the federal reserve system?",
-        "State the process that divides one nucleus into two genetically identical nuclei?",
-        "Who won the most mvp awards in the nba?",
-        "What river is associated with the city of rome?",
-        "Who is the first president to be impeached?",
-        "Who is the head of the department of homeland security 2017?",
-        "What is the name given to the common currency to the european union?",
-        "What was the emperor name in star wars?",
-        "Do you have to have a gun permit to shoot at a range?",
-        "Who proposed evolution in 1859 as the basis of biological development?",
-        "Nuclear power plant that blew up in russia?",
-        "Who played john connor in the original terminator?"
-    ]
+    # tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    # questions = [
+    #     "Who wrote the book the origin of species?",
+    #     "Who is the founder of the ubuntu project?",
+    #     "Who is the quarterback for the green bay packers?",
+    #     "Panda is a national animal of which country?",
+    #     "Who came up with the theory of relativity?",
+    #     "When was the first star wars film released?",
+    #     "What is the most common blood type in sweden?",
+    #     "Who is regarded as the founder of psychoanalysis?",
+    #     "Who took the first steps on the moon in 1969?",
+    #     "Who is the largest supermarket chain in the uk?",
+    #     "What is the meaning of shalom in english?",
+    #     "Who was the author of the art of war?",
+    #     "Largest state in the us by land mass?",
+    #     "Green algae is an example of which type of reproduction?",
+    #     "Vikram samvat calender is official in which country?",
+    #     "Who is mostly responsible for writing the declaration of independence?",
+    #     "What us state forms the western boundary of montana?",
+    #     "Who plays ser davos in game of thrones?",
+    #     "Who appoints the chair of the federal reserve system?",
+    #     "State the process that divides one nucleus into two genetically identical nuclei?",
+    #     "Who won the most mvp awards in the nba?",
+    #     "What river is associated with the city of rome?",
+    #     "Who is the first president to be impeached?",
+    #     "Who is the head of the department of homeland security 2017?",
+    #     "What is the name given to the common currency to the european union?",
+    #     "What was the emperor name in star wars?",
+    #     "Do you have to have a gun permit to shoot at a range?",
+    #     "Who proposed evolution in 1859 as the basis of biological development?",
+    #     "Nuclear power plant that blew up in russia?",
+    #     "Who played john connor in the original terminator?"
+    # ]
 
-    maths = [
-        "5+7=",
-        "1+3=",
-        "2*3=",
-        "6/2=",
-        "10-3=",
-        "10+3=",
-        "1+1=",
-        "2+2=",
-        "3+3=",
+    # maths = [
+    #     "5+7=",
+    #     "1+3=",
+    #     "2*3=",
+    #     "6/2=",
+    #     "10-3=",
+    #     "10+3=",
+    #     "1+1=",
+    #     "2+2=",
+    #     "3+3=",
      
-    ]
+    # ]
 
-    prompts = [
-        "The meaning of life is",
-        "Hello, I'm a language model,",
-        "5+7=",
-        "five plus seven is",
-        "The capital of France is",
-        "The answer to the ultimate question of life, the universe, and everything is",
-        "Once upon a time, there was a",
-    ]
+    # prompts = [
+    #     "The meaning of life is",
+    #     "Hello, I'm a language model,",
+    #     "5+7=",
+    #     "five plus seven is",
+    #     "The capital of France is",
+    #     "The answer to the ultimate question of life, the universe, and everything is",
+    #     "Once upon a time, there was a",
+    # ]
 
-    samples = generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompts=prompts,
-        max_length=64,
-        n_samples=2,
-        top_k=10,
-        temperature=1.0,
-    )
+    # samples = generate(
+    #     model=model,
+    #     tokenizer=tokenizer,
+    #     prompts=prompts,
+    #     max_length=64,
+    #     n_samples=2,
+    #     top_k=10,
+    #     temperature=1.0,
+    # )
     
-    for prompt, sample_list in samples.items():
-        print(f"prompt: {prompt}")
-        for i, sample in enumerate(sample_list):
-            print(f"sample {i}: {sample}")
-        print()
+    # for prompt, sample_list in samples.items():
+    #     print(f"prompt: {prompt}")
+    #     for i, sample in enumerate(sample_list):
+    #         print(f"sample {i}: {sample}")
+    #     print()

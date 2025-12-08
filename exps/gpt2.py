@@ -1,103 +1,45 @@
-import os
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.98"
-os.environ["JAX_COMPILER_ENABLE_REMAT_PASS"] = "false"
-# # os.environ["NCCL_DEBUG"] = "INFO"
-
-# # Critical P2P memory reductions
-# os.environ["NCCL_BUFFSIZE"] = "1048576"        # Reduce from 4MB to 1MB per channel
-# os.environ["NCCL_NTHREADS"] = "2"              # Reduce NCCL worker threads  
-# os.environ["NCCL_MAX_NCHANNELS"] = "2"         # Limit channels (was 24!)
-# os.environ["NCCL_MIN_NCHANNELS"] = "2"         # Force minimal channels
-# os.environ["NCCL_P2P_DISABLE"] = "0"           # Keep P2P but reduce memory
-# os.environ["NCCL_SHM_DISABLE"] = "1"   
-
-from dataclasses import dataclass, field
-from typing import Callable
-
-import jax
-from jax import numpy as jnp
-from flax import nnx
 import optax
+from sws import Config
+from model_configs import get_gpt2_config
 
-from utils.configs import OptimizerConfig, ExperimentConfig, ParallelConfig, HFDataConfig, ArrayRecordDataConfig
+def get_config():
+    cfg = Config()
+    cfg.seed = 42
+    cfg.exp_name = "gpt2-base"
 
-from modelling.models.gpt import GPTConfig
+    cfg.model = get_gpt2_config()
 
-sequence_length = 1024
+    cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
+    cfg.data.tokenizer_name = "gpt2"
+    cfg.data.max_length = 1024
+    cfg.data.batch_size = 2
 
-max_steps = 60_000
-warmup_steps = 700
+    cfg.optim.name = "adamw"
+    cfg.optim.weight_decay = 0.1
+    cfg.optim.betas = (0.9, 0.95)
+    cfg.optim.grad_clip = 1.0
+    cfg.optim.batch_size = lambda: cfg.data.batch_size
+    cfg.optim.accum_steps = 1
+    cfg.optim.eps = 1e-8
+    cfg.optim.schedule.init_value = 0.0
+    cfg.optim.schedule.peak_value = 1e-3
+    cfg.optim.schedule.warmup_steps = 700
+    cfg.optim.schedule.decay_steps = lambda: cfg.max_steps - cfg.optim.schedule.warmup_steps
+    cfg.optim.schedule.end_value = 6e-5
 
-model_config = GPTConfig(
-    vocab_size=50304,
-    hidden_dim=768,
-    num_layers=12,
-    num_attention_heads=12,
-    intermediate_dim=3072,
-    head_dim=64,
-    act_fn=nnx.gelu,
-    max_seq_len=sequence_length,
-    layer_norm_epsilon=1e-5,
-    use_bias=False,
-    dtype=jnp.bfloat16,
-)
+    cfg.parallel.data_parallel = 1
+    cfg.parallel.zero_stage = 3
+    
+    
+    cfg.max_steps = 60_000
+    cfg.generate_every = 500
+    cfg.eval_every = -1
+    cfg.save_every = 5000
+    cfg.save_dir = "checkpoints"
+    cfg.profile_dir= "profile"
+    cfg.start_trace_micro_step = 10
+    cfg.end_trace_micro_step = 20
+    cfg.gpu = "H100"
 
-train_data = HFDataConfig(
-    hf_name=["HuggingFaceFW/fineweb-edu", "sample-10BT"],
-    tokenizer_name="gpt2",
-    max_length=sequence_length,
-    streaming=True,
-)
-
-# train_data = ArrayRecordDataConfig(
-#     path="/root/jaximus/notebooks/saved/HuggingFaceFW/fineweb-edu/sample-10BT",
-#     max_length=sequence_length,
-#     tokenizer_name="gpt2",
-# )
-
-
-optim_config = OptimizerConfig(
-    name="adamw",
-    weight_decay=0.1,
-    betas=(0.9, 0.95),
-    grad_clip=1.0,
-    batch_size=1,
-    accum_steps=1,
-    eps=1e-8,
-    lr=optax.warmup_cosine_decay_schedule(
-        init_value=0.0,
-        peak_value=1e-3,
-        warmup_steps=warmup_steps,
-        decay_steps=max_steps - warmup_steps,
-        end_value=6e-5
-    )
-)
-
-
-parallel_config = ParallelConfig(
-    data_parallel=1,
-)
-
-exp_config = ExperimentConfig(
-    name="gpt2",
-    seed=42,
-    model=model_config,
-    optimizer=optim_config,
-    parallel=parallel_config,
-    train_data=train_data,
-    val_data=None,
-    steps=max_steps,
-    generate_every=500,
-    eval_every=-1,
-    save_every=5000,
-    save_dir="checkpoints",
-    trace_dir="traces",
-    start_trace_micro_step=10,
-    end_trace_micro_step=20,
-    gpu="H100",
-)
-
-from train import train
-
-train(exp_config)
+    return cfg

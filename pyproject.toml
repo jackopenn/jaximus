@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "array-record>=0.7.2",
-    "chz>=0.3.0",
     "datasets>=4.0.0",
     "flax==0.12.0",
     "grain>=0.2.11",
@@ -16,6 +15,7 @@ dependencies = [
     "optax>=0.2.5",
     "orbax-checkpoint>=0.11.21",
     "polars>=1.33.1",
+    "sws-config>=0.6.2",
     "tensorflow>=2.20.0",
     "transformers>=4.55.0",
     "wandb>=0.21.1",

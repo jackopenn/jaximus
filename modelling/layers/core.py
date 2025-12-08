@@ -17,7 +17,7 @@ class MLP(nnx.Module):
         self,
         hidden_dim: int,
         intermediate_dim: int,
-        act_fn: Callable,
+        act_fn: str,
         use_bias: bool,
         rngs: jnp.ndarray,
         dtype: jnp.dtype,
@@ -45,7 +45,8 @@ class MLP(nnx.Module):
             kernel_init=nnx.with_partitioning(proj_init, (None, shard_axis_name)),
             bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
-        self.act_fn = act_fn
+        # TODO: generalise this
+        self.act_fn = nnx.gelu if act_fn == "gelu" else nnx.silu if act_fn == "silu" else None
 
     def __call__(self, x):
         x = self.up_proj(x)
@@ -136,6 +137,8 @@ class Attention(nnx.Module):
         self.qk_norm = qk_norm
         self.use_bias = use_bias
         self.dtype = dtype
+        self.attn_logit_softcapping = attn_logit_softcapping
+        self.sliding_window = sliding_window
 
         self.q_proj = nnx.LinearGeneral(
             hidden_dim,
@@ -297,7 +300,7 @@ class Attention(nnx.Module):
                     is_causal=True,
                     implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
                     mask=mask,
-                    local_window_size=(self.sliding_window,)
+                    # local_window_size=(self.sliding_window,)
                 )
 
         with jax.named_scope("o_proj"):

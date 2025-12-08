@@ -7,7 +7,6 @@ from data.array_records import get_array_record_dataset
 from modelling.models.gpt import GPT, GPTConfig
 from modelling.models.qwen3 import Qwen3, Qwen3Config
 from modelling.models.llama import Llama, LlamaConfig
-from utils.configs import DataConfig, ModelConfig, OptimizerConfig, HFDataConfig, DummyDataConfig, ArrayRecordDataConfig, ParallelConfig
 
 import optax
 import jax

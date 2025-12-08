@@ -2,25 +2,9 @@ from typing import Callable
 from jax import numpy as jnp
 from flax import nnx
 from modelling.layers.core import MLP, Attention
-import chz
-from utils.configs import ModelConfig
-
-@chz.chz
-class GPTConfig(ModelConfig):
-    name: str = "gpt"
-    vocab_size: int
-    hidden_dim: int
-    num_layers: int
-    num_attention_heads: int
-    head_dim: int
-    intermediate_dim: int
-    act_fn: Callable
-    max_seq_len: int
-    layer_norm_epsilon: float
-    use_bias: bool
 
 
-class GPTLayer(nnx.Module):
+class Layer(nnx.Module):
     def __init__(
             self,
             hidden_dim: int,
@@ -66,33 +50,34 @@ class GPTLayer(nnx.Module):
         return x
 
 
-class GPT(nnx.Module):
-    def __init__(self, config: GPTConfig, rngs: nnx.Rngs):
+class Model(nnx.Module):
+    def __init__(self, config, rngs: nnx.Rngs):
         super().__init__()
         self.config = config
+        self.dtype = getattr(jnp, config.dtype)
 
         std = 0.02
         resid_scale = 1.0 / jnp.sqrt(2 * config.num_layers)
-        kernel_init = nnx.initializers.normal(stddev=std)
-        proj_init   = nnx.initializers.normal(stddev=std * resid_scale)
-        bias_init   = nnx.initializers.zeros_init()
+        self.kernel_init = nnx.initializers.normal(stddev=std)
+        self.proj_init   = nnx.initializers.normal(stddev=std * resid_scale)
+        self.bias_init   = nnx.initializers.zeros_init()
 
         self.token_embedding = nnx.Embed(
             num_embeddings=config.vocab_size,
             features=config.hidden_dim,
-            dtype=config.dtype,
-            embedding_init=kernel_init,
+            dtype=self.dtype,
+            embedding_init=self.kernel_init,
             rngs=rngs,
         )
         self.pos_embedding = nnx.Embed(
             num_embeddings=config.max_seq_len,
             features=config.hidden_dim,
-            dtype=config.dtype,
-            embedding_init=kernel_init,
+            dtype=self.dtype,
+            embedding_init=self.kernel_init,
             rngs=rngs,
         )
-        self.layers = [
-            GPTLayer(
+        self.layers = nnx.List([
+            Layer(
                 hidden_dim=config.hidden_dim,
                 num_attention_heads=config.num_attention_heads,
                 head_dim=config.head_dim,
@@ -100,14 +85,14 @@ class GPT(nnx.Module):
                 act_fn=config.act_fn,
                 layer_norm_epsilon=config.layer_norm_epsilon,
                 use_bias=config.use_bias,
-                dtype=config.dtype,
-                kernel_init=kernel_init,
-                bias_init=bias_init,
-                proj_init=proj_init,
+                dtype=self.dtype,
+                kernel_init=self.kernel_init,
+                bias_init=self.bias_init,
+                proj_init=self.proj_init,
                 rngs=rngs
             )
             for _ in range(config.num_layers)
-        ]
+        ])
         self.ln_f = nnx.LayerNorm(
             num_features=config.hidden_dim,
             use_bias=config.use_bias,
