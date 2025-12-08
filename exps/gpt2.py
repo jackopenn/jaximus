@@ -37,9 +37,6 @@ def get_config():
     cfg.eval_every = -1
     cfg.save_every = 5000
     cfg.save_dir = "checkpoints"
-    cfg.profile_dir= "profile"
-    cfg.start_trace_micro_step = 10
-    cfg.end_trace_micro_step = 20
     cfg.gpu = "H100"
 
     return cfg

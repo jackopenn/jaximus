@@ -22,9 +22,7 @@ class MetricLogger:
         #     self.learning_rate = lambda step: optimizer_scheduler(step)
 
         self.prev_metrics = None
-        self.step = 1
         self.tokens_consumed = 0
-
 
 
     def _human_format(self, num: float, billions: bool = False, divide_by_1024: bool = False) -> str:
@@ -42,8 +40,9 @@ class MetricLogger:
         return "{}{}".format("{:f}".format(num).rstrip("0").rstrip("."), SIZES[magnitude])
 
 
-    def _pretty_print(self, metrics):
-        print_string = f"step: {self.step}"
+    def _pretty_print(self, metrics, step):
+        loss = metrics.pop("loss")
+        print_string = f"step: {step}, loss: {self._human_format(loss)}"
         for k, v in metrics.items():
             print_string += f", {k}: {self._human_format(v)}"
         print(print_string)
@@ -56,18 +55,14 @@ class MetricLogger:
         if not log_metrics:
             return
 
+        step = log_metrics.pop("step")
         # move to cpu - to not block 
         log_metrics = jax.tree_util.tree_map(lambda x: float(x), log_metrics)
-        
         log_metrics["tokens_consumed"] = self.tokens_consumed
         log_metrics["tokens_per_second"] = self.tokens_per_batch / log_metrics["step_time"]
         log_metrics["tokens_per_second_per_device"] = log_metrics["tokens_per_second"] / self.num_devices
         log_metrics["mfu"] = ((self.n_flops_per_token * log_metrics["tokens_per_second"]) / self.gpu_peak_flops) * 100
         # log_metrics["lr"] = self.learning_rate(self.step)
-
-        self._pretty_print(log_metrics)
-        
+        self._pretty_print(log_metrics, step)
         if self.wandb:
-            self.wandb.log(log_metrics, step=self.step)
-
-        self.step += 1
+            self.wandb.log(log_metrics, step=step)

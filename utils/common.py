@@ -38,3 +38,11 @@ def get_gpu_peak_flops(gpu_name):
         return 459e12
     else:
         raise ValueError(f"don't have peak flops for {gpu_name}")
+    
+def pretty_print_samples(samples):
+    for prompt, samples_list in samples.items():
+        print(f"prompt: {prompt}")
+        for i, sample in enumerate(samples_list):
+            clean = re.sub(r'^(?:<\|endoftext\|>)+', '', sample)
+            print(f"sample {i}: {clean}")
+        print()
