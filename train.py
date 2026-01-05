@@ -237,10 +237,11 @@ def train(cfg):
             t0 = time.time()
 
             # log metrics
-            train_logger.log({"loss": loss, "grad_norm": grad_norm, "step_time": step_time, "step": step})
+            if main_process:
+                train_logger.log({"loss": loss, "grad_norm": grad_norm, "step_time": step_time, "step": step})
 
             # generate samples
-            if step > 0 and step % cfg.generate_every == 0:
+            if main_process and step > 0 and step % cfg.generate_every == 0:
                 samples = generate(model, tokenizer)
                 pretty_print_samples(samples)
 
