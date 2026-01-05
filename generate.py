@@ -1,235 +1,159 @@
-from typing import List
 from functools import partial
 import jax
 from jax import numpy as jnp
-from jax.sharding import PartitionSpec as P, NamedSharding
 from flax import nnx
-from transformers import AutoTokenizer
-import wandb
-import orbax.checkpoint as ocp
 
 from parallel import logical_to_physical
 
 
-def _make_sample_fn(model):
-    """Create a jitted sample function that works with any sharding strategy."""
+@nnx.jit(static_argnums=(2, 3, 4, 5))
+def _sample_batch(model, tokens, prompt_len, gen_len, top_k, temperature, key):
+    """
+    Autoregressive sampling for a batch. All prompts must have same length.
     
-    @partial(
-        jax.jit,
-        static_argnames=("prompt_length", "sample_length", "top_k", "temperature"),
-        donate_argnums=(0,)
-    )
-    def sample(batch, mask, prompt_length, sample_length, top_k, temperature, key=jax.random.PRNGKey(0)):
-
-        def body_fn(i, carry):
-            batch, mask, sample_idx, key = carry
-            key, subkey = jax.random.split(key)
+    Args:
+        model: nnx model
+        tokens: [batch, seq_len] token ids
+        prompt_len: static int, length of all prompts
+        gen_len: static int, tokens to generate
+        top_k: static int
+        temperature: static float
+        key: PRNGKey
+    
+    Returns:
+        tokens: [batch, seq_len] with generated tokens
+    """
+    def body_fn(i, carry):
+        tokens, pos, key = carry
+        key, subkey = jax.random.split(key)
         
-            logits = model(batch, mask)
-            logits = logits[:, sample_idx, :].astype(jnp.float32) / temperature
-            values, _ = jax.lax.top_k(logits, k=top_k)
-            kth_value = values[:, -1]
-            logits = jnp.where(logits < kth_value[:, jnp.newaxis], -jnp.inf, logits)
-            next_token = jax.random.categorical(subkey, logits)
-            sample_idx += 1
-            batch = batch.at[:, sample_idx].set(next_token)
-            mask = mask.at[:, sample_idx].set(jnp.ones_like(next_token, dtype=jnp.bool_))
-            return batch, mask, sample_idx, key
+        logits = model(tokens)
+        logits = logits[:, pos, :].astype(jnp.float32) / temperature
         
-        sample_idx = prompt_length - 1
-        batch, _, _, _ = jax.lax.fori_loop(0, sample_length, body_fn, (batch, mask, sample_idx, key))
-        return batch
+        # Top-k filtering
+        top_values, _ = jax.lax.top_k(logits, k=top_k)
+        threshold = top_values[:, -1:]
+        logits = jnp.where(logits < threshold, -jnp.inf, logits)
+        
+        # Sample
+        next_token = jax.random.categorical(subkey, logits)
+        
+        # Update
+        pos = pos + 1
+        tokens = tokens.at[:, pos].set(next_token)
+        
+        return tokens, pos, key
     
-    return sample
-
-
-def _replicate_array(arr):
-    return jax.device_put(arr, logical_to_physical(("batch", "seq")))
-    
-
-
-def _gather_to_host(arr):
-    """Gather a potentially sharded array to host memory as numpy."""
-    # This handles both sharded and replicated arrays
-    return jnp.asarray(arr)
+    pos = prompt_len - 1
+    tokens, _, _ = jax.lax.fori_loop(0, gen_len, body_fn, (tokens, pos, key))
+    return tokens
 
 
 def generate(
     model,
     tokenizer,
-    prompts=[
-        "The meaning of life is",
-        "Hello, I'm a language model",
-        "5+7=",
-        "five plus seven is",
-        "The capital of France is",
-        "The answer to the ultimate question of life, the universe, and everything is",
-        "Once upon a time, there was a",
-    ],
-    max_length=64,
-    n_samples=16,
-    top_k=10,
-    temperature=1.0
-):
+    prompts: list[str] = None,
+    max_length: int = 64,
+    n_samples: int = 5,
+    top_k: int = 10,
+    temperature: float = 1.0,
+    seed: int = 0,
+) -> dict[str, list[str]] | None:
     """
-    Generate samples from the model. Works with any sharding strategy (DP, TP, FSDP).
+    Generate text samples. Batches all prompts and shards across devices like training.
     
-    For TP/sharded models: inputs are replicated across all devices, the model
-    computes with its sharded weights, and outputs are gathered back.
+    For multi-host: ALL processes must call this. Returns results only on main process.
     
-    IMPORTANT for multi-host: ALL processes must call this function (don't guard
-    with `if main_process`). For TP, the forward pass requires all hosts. Returns
-    results only on main process (None on others).
+    Note: All prompts are padded to same length for efficient batched generation.
     """
-    main_process = jax.process_index() == 0
-    sample = _make_sample_fn(model)
-
-    if not tokenizer.pad_token:
+    if prompts is None:
+        prompts = [
+            "The meaning of life is",
+            "Hello, I'm a language model",
+            "The capital of France is",
+        ]
+    
+    n_processes = jax.process_count()
+    process_idx = jax.process_index()
+    main_process = process_idx == 0
+    
+    # Setup tokenizer
+    if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.bos_token
-
-    # create a batch of size (n_samples * len(prompts), max_length) left padded with pad_token_id
-    prompts_tokens = tokenizer.batch_encode_plus(prompts)['input_ids']
-    prompts_tokens = [jnp.concatenate([jnp.array([tokenizer.bos_token_id]), jnp.array(x)]) for x in prompts_tokens]
-
-    prompt_token_lengths = [x.shape[0] for x in prompts_tokens]
-
-    prompts_tokens = [jnp.pad(x, (0, max_length - x.shape[0]), mode='constant', constant_values=tokenizer.pad_token_id) for x in prompts_tokens]
-    prompts_tokens = [jnp.repeat(x[jnp.newaxis, :], n_samples, axis=0) for x in prompts_tokens]
-    masks = [x != tokenizer.pad_token_id for x in prompts_tokens]
-    masks = [mask.at[:, 0].set(True) for mask in masks]
-
-    generated_tokens = []
-    for prompt_tokens, mask, prompt_token_length in zip(prompts_tokens, masks, prompt_token_lengths):
-        sample_length = max_length - prompt_token_length
-        # Replicate inputs across all devices (required for TP where model is sharded)
-        prompt_tokens = _replicate_array(prompt_tokens)
-        mask = _replicate_array(mask)
-        result = sample(prompt_tokens, mask, prompt_token_length, sample_length, top_k, temperature)
-        # Gather result back (in case output is sharded)
-        generated_tokens.append(_gather_to_host(result))
-
-    # Only main process returns decoded results
+    pad_id = tokenizer.pad_token_id
+    bos_id = tokenizer.bos_token_id
+    
+    # Tokenize all prompts
+    prompt_token_lists = []
+    for prompt in prompts:
+        ids = [bos_id] + tokenizer.encode(prompt, add_special_tokens=False)
+        prompt_token_lists.append(ids)
+    
+    # Find max prompt length, pad all to same length
+    max_prompt_len = max(len(p) for p in prompt_token_lists)
+    gen_len = max_length - max_prompt_len
+    
+    if gen_len <= 0:
+        raise ValueError(f"max_length ({max_length}) must be > longest prompt ({max_prompt_len})")
+    
+    # Build global batch: [n_prompts * n_samples, max_length]
+    # Each prompt repeated n_samples times
+    global_batch_size = len(prompts) * n_samples
+    
+    # Ensure batch divisible by process count
+    if global_batch_size % n_processes != 0:
+        raise ValueError(
+            f"Total batch size ({len(prompts)} prompts × {n_samples} samples = {global_batch_size}) "
+            f"must be divisible by process count ({n_processes})"
+        )
+    
+    local_batch_size = global_batch_size // n_processes
+    
+    # Build full token array (all processes build the same thing, then slice)
+    all_tokens = []
+    for prompt_ids in prompt_token_lists:
+        # Pad prompt to max_prompt_len, then pad rest with pad tokens
+        padded = prompt_ids + [pad_id] * (max_length - len(prompt_ids))
+        for _ in range(n_samples):
+            all_tokens.append(padded)
+    
+    all_tokens = jnp.array(all_tokens)  # [global_batch_size, max_length]
+    
+    # Each process takes its slice
+    start_idx = process_idx * local_batch_size
+    end_idx = start_idx + local_batch_size
+    local_tokens = all_tokens[start_idx:end_idx]
+    
+    # Create sharded array from local data
+    tokens = jax.make_array_from_process_local_data(
+        logical_to_physical(("batch", "seq")),
+        local_tokens
+    )
+    
+    # Generate with cached model
+    key = jax.random.PRNGKey(seed)
+    sample_fn = nnx.cached_partial(_sample_batch, model)
+    generated = sample_fn(tokens, max_prompt_len, gen_len, top_k, temperature, key)
+    
+    # Gather all results to host 0
+    # Convert sharded array to global array on all hosts
+    all_generated = jnp.asarray(generated)
+    
     if not main_process:
         return None
-
-    decoded_tokens = tokenizer.batch_decode(jnp.concatenate(generated_tokens, axis=0))
     
-    samples = {}
-    for i in range(0, n_samples * len(prompts), n_samples):
-        prompt_idx = i // n_samples
-        for j in range(n_samples):
-            samples[prompts[prompt_idx]] = samples.get(prompts[prompt_idx], []) + [decoded_tokens[i + j]]
+    # Decode on main process
+    decoded = tokenizer.batch_decode(all_generated, skip_special_tokens=False)
     
-    return samples
+    # Organize into dict: prompt -> [samples]
+    results = {}
+    for i, prompt in enumerate(prompts):
+        start = i * n_samples
+        end = start + n_samples
+        results[prompt] = decoded[start:end]
+    
+    return results
 
 
 if __name__ == "__main__":
-    print("TODO: add generation")
-    
-    # # weight_path = "jackpenn/transformers/run_vckuuoa9_model:v11"
-    
-    # # run = wandb.init(project="transformers")
-    # # artifact = run.use_artifact(weight_path, type='model')
-    # # weight_path = artifact.download()
-    
-    # weight_path = "/Users/jack/projects/jaximus/artifacts/run_vckuuoa9_model:v11"
-
-    # model_config = GPTConfig(
-    #     vocab_size=50304,
-    #     hidden_dim=768,
-    #     num_layers=12,
-    #     num_attention_heads=12,
-    #     intermediate_dim=3072,
-    #     head_dim=64,
-    #     act_fn=nnx.gelu,
-    #     max_seq_len=1024,
-    #     layer_norm_epsilon=1e-5,
-    #     use_bias=False,
-    #     dtype=jnp.bfloat16,
-    # )
-
-    # ckpt = ocp.StandardCheckpointer()
-    # abstract_model = nnx.eval_shape(lambda: GPT(model_config, nnx.Rngs(jax.random.PRNGKey(0))))
-    # graphdef, abstract_state = nnx.split(abstract_model)
-
-    # sharding = jax.sharding.NamedSharding(
-    #     jax.sharding.Mesh(jax.devices(), ('data',)),
-    #     jax.sharding.PartitionSpec(),
-    # )
-    # sharded_abstract_state = jax.tree_util.tree_map(lambda x: x.update(sharding=sharding), abstract_state)
-
-    # state_restored = ckpt.restore(weight_path + f"/default", sharded_abstract_state)
-    # model = nnx.merge(graphdef, state_restored)
-
-    # tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    # questions = [
-    #     "Who wrote the book the origin of species?",
-    #     "Who is the founder of the ubuntu project?",
-    #     "Who is the quarterback for the green bay packers?",
-    #     "Panda is a national animal of which country?",
-    #     "Who came up with the theory of relativity?",
-    #     "When was the first star wars film released?",
-    #     "What is the most common blood type in sweden?",
-    #     "Who is regarded as the founder of psychoanalysis?",
-    #     "Who took the first steps on the moon in 1969?",
-    #     "Who is the largest supermarket chain in the uk?",
-    #     "What is the meaning of shalom in english?",
-    #     "Who was the author of the art of war?",
-    #     "Largest state in the us by land mass?",
-    #     "Green algae is an example of which type of reproduction?",
-    #     "Vikram samvat calender is official in which country?",
-    #     "Who is mostly responsible for writing the declaration of independence?",
-    #     "What us state forms the western boundary of montana?",
-    #     "Who plays ser davos in game of thrones?",
-    #     "Who appoints the chair of the federal reserve system?",
-    #     "State the process that divides one nucleus into two genetically identical nuclei?",
-    #     "Who won the most mvp awards in the nba?",
-    #     "What river is associated with the city of rome?",
-    #     "Who is the first president to be impeached?",
-    #     "Who is the head of the department of homeland security 2017?",
-    #     "What is the name given to the common currency to the european union?",
-    #     "What was the emperor name in star wars?",
-    #     "Do you have to have a gun permit to shoot at a range?",
-    #     "Who proposed evolution in 1859 as the basis of biological development?",
-    #     "Nuclear power plant that blew up in russia?",
-    #     "Who played john connor in the original terminator?"
-    # ]
-
-    # maths = [
-    #     "5+7=",
-    #     "1+3=",
-    #     "2*3=",
-    #     "6/2=",
-    #     "10-3=",
-    #     "10+3=",
-    #     "1+1=",
-    #     "2+2=",
-    #     "3+3=",
-     
-    # ]
-
-    # prompts = [
-    #     "The meaning of life is",
-    #     "Hello, I'm a language model,",
-    #     "5+7=",
-    #     "five plus seven is",
-    #     "The capital of France is",
-    #     "The answer to the ultimate question of life, the universe, and everything is",
-    #     "Once upon a time, there was a",
-    # ]
-
-    # samples = generate(
-    #     model=model,
-    #     tokenizer=tokenizer,
-    #     prompts=prompts,
-    #     max_length=64,
-    #     n_samples=2,
-    #     top_k=10,
-    #     temperature=1.0,
-    # )
-    
-    # for prompt, sample_list in samples.items():
-    #     print(f"prompt: {prompt}")
-    #     for i, sample in enumerate(sample_list):
-    #         print(f"sample {i}: {sample}")
-    #     print()
+    print("Usage: import generate and call generate(model, tokenizer)")

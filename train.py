@@ -206,8 +206,10 @@ def train(cfg):
             profiler_options.gpu_dump_graph_node_mapping = True
     
     # init checkpoint manager
-    checkpoint_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/{cfg.checkpoint_dir}/')
-    checkpoint_options = ocp.CheckpointManagerOptions(cleanup_tmp_directories=True)
+    checkpoint_dir = cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
+    if jax.process_index() == 0:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_options = ocp.CheckpointManagerOptions(max_to_keep=1,cleanup_tmp_directories=True)
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
 
     # https://flax.readthedocs.io/en/stable/guides/performance.html#caching-graph-node-traversals
@@ -249,11 +251,16 @@ def train(cfg):
             # checkpoint
             if step > 0 and step % cfg.checkpoint_every == 0:
                 checkpoint_manager.save(step, args=ocp.args.StandardSave(nnx.state(model)))
-                # TODO: make work eith gcloud
-                # checkpoint_manager.wait_until_finished() # must wait before logging to wandb
-                # wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
+                checkpoint_manager.wait_until_finished() # must wait before logging to wandb
+                wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
 
             step += 1
+        
+    # final checkpoint (don't do if we just did)
+    if step % cfg.checkpoint_every != 0:
+        checkpoint_manager.save(step, args=ocp.args.StandardSave(nnx.state(model)))
+        checkpoint_manager.wait_until_finished() # must wait before logging to wandb
+        wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
     
     if main_process:
         wandb_run.finish()
