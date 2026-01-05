@@ -4,8 +4,6 @@ from jax import numpy as jnp
 import numpy as np
 from flax import nnx
 
-from jax.sharding import NamedSharding, PartitionSpec as P
-
 from parallel import logical_to_physical
 
 @nnx.jit(static_argnums=(2, 3, 4, 5))
@@ -145,7 +143,8 @@ def generate(
     sample_fn = nnx.cached_partial(_sample_batch, model)
     generated = sample_fn(tokens, max_prompt_len, gen_len, top_k, temperature, key)
     
-    all_generated = jax.device_put(generated, P())
+    # Gather to host by converting to numpy (automatically gathers from all devices)
+    all_generated = np.asarray(generated)
     
     if not main_process:
         return None
