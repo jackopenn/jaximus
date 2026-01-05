@@ -80,7 +80,7 @@ def get_config():
 
     cfg.parallel.multihost = True
     cfg.parallel.strategy = "dp"
-    cfg.parallel.data = jax.device_count()
+    cfg.parallel.data = 16
 
 
     # ---------- optimizer config ----------
