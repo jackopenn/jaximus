@@ -4,8 +4,9 @@ from jax import numpy as jnp
 import numpy as np
 from flax import nnx
 
+from jax.sharding import NamedSharding, PartitionSpec as P
+
 from parallel import logical_to_physical
-from jax.sharding import PartitionSpec as P
 
 @nnx.jit(static_argnums=(2, 3, 4, 5))
 def _sample_batch(model, tokens, prompt_len, gen_len, top_k, temperature, key):
@@ -144,10 +145,13 @@ def generate(
     sample_fn = nnx.cached_partial(_sample_batch, model)
     generated = sample_fn(tokens, max_prompt_len, gen_len, top_k, temperature, key)
     
-    all_generated = generated.at[:real_batch_size].get(out_sharding=P())
-
-    # Decode on main process (only real samples, not padding)
-    decoded = tokenizer.batch_decode(all_generated, skip_special_tokens=False)
+    all_generated = jax.device_put(generated, P())
+    
+    if not main_process:
+        return None
+    
+    # Slice off padding and decode on main process only
+    decoded = tokenizer.batch_decode(all_generated[:real_batch_size], skip_special_tokens=False)
     
     # Organize into dict: prompt -> [samples]
     results = {}
