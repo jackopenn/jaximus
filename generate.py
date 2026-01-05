@@ -98,14 +98,12 @@ def generate(
     
     # Build global batch: [n_prompts * n_samples, max_length]
     # Each prompt repeated n_samples times
-    global_batch_size = len(prompts) * n_samples
+    real_batch_size = len(prompts) * n_samples
     
-    # Ensure batch divisible by process count
-    if global_batch_size % n_processes != 0:
-        raise ValueError(
-            f"Total batch size ({len(prompts)} prompts × {n_samples} samples = {global_batch_size}) "
-            f"must be divisible by process count ({n_processes})"
-        )
+    # Pad batch to be divisible by process count
+    remainder = real_batch_size % n_processes
+    pad_samples = (n_processes - remainder) % n_processes
+    global_batch_size = real_batch_size + pad_samples
     
     local_batch_size = global_batch_size // n_processes
     
@@ -116,6 +114,11 @@ def generate(
         padded = prompt_ids + [pad_id] * (max_length - len(prompt_ids))
         for _ in range(n_samples):
             all_tokens.append(padded)
+    
+    # Pad batch with copies of last sample if needed
+    if pad_samples > 0:
+        for _ in range(pad_samples):
+            all_tokens.append(all_tokens[-1])
     
     all_tokens = jnp.array(all_tokens)  # [global_batch_size, max_length]
     
@@ -142,8 +145,8 @@ def generate(
     if not main_process:
         return None
     
-    # Decode on main process
-    decoded = tokenizer.batch_decode(all_generated, skip_special_tokens=False)
+    # Decode on main process (only real samples, not padding)
+    decoded = tokenizer.batch_decode(all_generated[:real_batch_size], skip_special_tokens=False)
     
     # Organize into dict: prompt -> [samples]
     results = {}
