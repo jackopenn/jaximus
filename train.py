@@ -1,3 +1,4 @@
+from functools import partial
 import os
 import time
 from datetime import datetime
@@ -88,8 +89,8 @@ def train_step(model, optimizer, batch):
 def train(cfg):
 
     # init mesh and distributed
-    # if cfg.parallel.multihost:
-        # jax.distributed.initialize()
+    if cfg.parallel.multihost:
+        jax.distributed.initialize()
     mesh = jax.make_mesh((cfg.parallel.data, ), ("data", ), (AxisType.Explicit))
     jax.set_mesh(mesh)
     main_process = jax.process_index() == 0
@@ -117,6 +118,57 @@ def train(cfg):
     model = Model(rngs=nnx.Rngs(cfg.seed), **cfg.model.to_dict())
     
     # init optimizer
+    def warmup_linear_decay_schedule(
+        init_value,
+        peak_value,
+        end_value,
+        warmup_steps,
+        decay_steps,
+        max_steps
+    ):
+        def schedule(step):
+            warmup_pct = step / jnp.maximum(warmup_steps, 1)
+            warmup_value = init_value + (peak_value - init_value) * warmup_pct
+            
+            decay_start = max_steps - decay_steps
+            decay_pct = (step - decay_start) / jnp.maximum(decay_steps, 1)
+            decay_value = peak_value + (end_value - peak_value) * decay_pct
+            
+            return jnp.where(
+                step < warmup_steps,
+                warmup_value,
+                jnp.where(step < decay_start, peak_value, decay_value)
+            )
+        return schedule
+    learning_rate_schedule = partial(warmup_linear_decay_schedule,
+        init_value=0.0,
+        end_value=0.0,
+        warmup_steps= 0.0 * cfg.max_steps,
+        decay_steps= 0.2 * cfg.max_steps,
+        max_steps=cfg.max_steps,
+    )
+    adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
+    cfg.optim.tx = lambda: optax.chain(
+        optax.clip_by_global_norm(1.0),
+        optax.partition(
+            {
+                "token_embedding": optax.adamw(
+                    learning_rate=learning_rate_schedule(peak_value=0.2 * ((cfg.model.hidden_dim / 768) ** -0.5)),
+                    **adamw_params,
+                ),
+                "lm_head": optax.adamw(
+                    learning_rate=learning_rate_schedule(peak_value=0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)),
+                    **adamw_params,
+                ),
+                "other": optax.contrib.muon(
+                    learning_rate=learning_rate_schedule(peak_value=0.02),
+                    nesterov=True,
+                    beta=0.95,
+                ),
+            },
+            lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
+        )
+    )
     tx = optax.MultiSteps(cfg.optim.tx, every_k_schedule=cfg.optim.accum_steps)
     optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
 
@@ -199,5 +251,4 @@ def train(cfg):
     wandb_run.finish()
 
 if __name__ == "__main__":
-    jax.distributed.initialize()
     sws_run(train)

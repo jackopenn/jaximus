@@ -5,28 +5,28 @@ from jax import numpy as jnp
 import optax
 from sws import Config
 
-def warmup_linear_decay_schedule(
-    init_value,
-    peak_value,
-    end_value,
-    warmup_steps,
-    decay_steps,
-    max_steps
-):
-    def schedule(step):
-        warmup_pct = step / jnp.maximum(warmup_steps, 1)
-        warmup_value = init_value + (peak_value - init_value) * warmup_pct
+# def warmup_linear_decay_schedule(
+#     init_value,
+#     peak_value,
+#     end_value,
+#     warmup_steps,
+#     decay_steps,
+#     max_steps
+# ):
+#     def schedule(step):
+#         warmup_pct = step / jnp.maximum(warmup_steps, 1)
+#         warmup_value = init_value + (peak_value - init_value) * warmup_pct
         
-        decay_start = max_steps - decay_steps
-        decay_pct = (step - decay_start) / jnp.maximum(decay_steps, 1)
-        decay_value = peak_value + (end_value - peak_value) * decay_pct
+#         decay_start = max_steps - decay_steps
+#         decay_pct = (step - decay_start) / jnp.maximum(decay_steps, 1)
+#         decay_value = peak_value + (end_value - peak_value) * decay_pct
         
-        return jnp.where(
-            step < warmup_steps,
-            warmup_value,
-            jnp.where(step < decay_start, peak_value, decay_value)
-        )
-    return schedule
+#         return jnp.where(
+#             step < warmup_steps,
+#             warmup_value,
+#             jnp.where(step < decay_start, peak_value, decay_value)
+#         )
+#     return schedule
 
 
 def get_config():
@@ -84,34 +84,34 @@ def get_config():
 
 
     # ---------- optimizer config ----------
-    learning_rate_schedule = partial(warmup_linear_decay_schedule,
-        init_value=0.0,
-        end_value=0.0,
-        warmup_steps= 0.0 * max_steps,
-        decay_steps= 0.2 * max_steps,
-        max_steps=max_steps,
-    )
-    adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
-    cfg.optim.tx = lambda: optax.chain(
-        optax.clip_by_global_norm(1.0),
-        optax.partition(
-            {
-                "token_embedding": optax.adamw(
-                    learning_rate=learning_rate_schedule(peak_value=0.2 * ((cfg.model.hidden_dim / 768) ** -0.5)),
-                    **adamw_params,
-                ),
-                "lm_head": optax.adamw(
-                    learning_rate=learning_rate_schedule(peak_value=0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)),
-                    **adamw_params,
-                ),
-                "other": optax.contrib.muon(
-                    learning_rate=learning_rate_schedule(peak_value=0.02),
-                    nesterov=True,
-                    beta=0.95,
-                ),
-            },
-            lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
-        )
-    )
+    # learning_rate_schedule = partial(warmup_linear_decay_schedule,
+    #     init_value=0.0,
+    #     end_value=0.0,
+    #     warmup_steps= 0.0 * max_steps,
+    #     decay_steps= 0.2 * max_steps,
+    #     max_steps=max_steps,
+    # )
+    # adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
+    # cfg.optim.tx = lambda: optax.chain(
+    #     optax.clip_by_global_norm(1.0),
+    #     optax.partition(
+    #         {
+    #             "token_embedding": optax.adamw(
+    #                 learning_rate=learning_rate_schedule(peak_value=0.2 * ((cfg.model.hidden_dim / 768) ** -0.5)),
+    #                 **adamw_params,
+    #             ),
+    #             "lm_head": optax.adamw(
+    #                 learning_rate=learning_rate_schedule(peak_value=0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)),
+    #                 **adamw_params,
+    #             ),
+    #             "other": optax.contrib.muon(
+    #                 learning_rate=learning_rate_schedule(peak_value=0.02),
+    #                 nesterov=True,
+    #                 beta=0.95,
+    #             ),
+    #         },
+    #         lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
+    #     )
+    # )
 
     return cfg
