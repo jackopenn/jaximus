@@ -86,8 +86,6 @@ def train_step(model, optimizer, batch):
 
 
 def train(cfg):
-    # validate config
-    validate_config(cfg)
 
     # init mesh and distributed
     if cfg.parallel.multihost:
@@ -97,6 +95,9 @@ def train(cfg):
     main_process = jax.process_index() == 0
     if main_process:
         print(f"{mesh=}")
+
+    # validate configV
+    validate_config(cfg)
 
     # init tokenizer
     tokenizer = AutoTokenizer.from_pretrained(cfg.data.tokenizer_name)
