@@ -5,7 +5,7 @@ import numpy as np
 from flax import nnx
 
 from parallel import logical_to_physical
-
+from jax.sharding import PartitionSpec as P
 
 @nnx.jit(static_argnums=(2, 3, 4, 5))
 def _sample_batch(model, tokens, prompt_len, gen_len, top_k, temperature, key):
@@ -70,8 +70,12 @@ def generate(
     if prompts is None:
         prompts = [
             "The meaning of life is",
-            "Hello, I'm a language model",
+            "Hello, I'm a language model,",
+            "5+7=",
+            "five plus seven is",
             "The capital of France is",
+            "The answer to the ultimate question of life, the universe, and everything is",
+            "Once upon a time, there was a",
         ]
     
     n_processes = jax.process_count()
@@ -140,15 +144,10 @@ def generate(
     sample_fn = nnx.cached_partial(_sample_batch, model)
     generated = sample_fn(tokens, max_prompt_len, gen_len, top_k, temperature, key)
     
-    # Gather all results to host 0
-    # Convert sharded array to global array on all hosts
-    all_generated = jnp.asarray(generated)
-    
-    if not main_process:
-        return None
-    
+    all_generated = generated.at[:real_batch_size].get(out_sharding=P())
+
     # Decode on main process (only real samples, not padding)
-    decoded = tokenizer.batch_decode(all_generated[:real_batch_size], skip_special_tokens=False)
+    decoded = tokenizer.batch_decode(all_generated, skip_special_tokens=False)
     
     # Organize into dict: prompt -> [samples]
     results = {}
