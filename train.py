@@ -153,7 +153,7 @@ def train(cfg):
         max_steps=cfg.max_steps,
     )
     adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
-    cfg.optim.tx = lambda: optax.chain(
+    tx = optax.chain(
         optax.clip_by_global_norm(1.0),
         optax.partition(
             {
@@ -174,7 +174,7 @@ def train(cfg):
             lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
         )
     )
-    tx = optax.MultiSteps(cfg.optim.tx, every_k_schedule=cfg.optim.accum_steps)
+    tx = optax.MultiSteps(tx, every_k_schedule=cfg.optim.accum_steps)
     optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
 
     if main_process:
