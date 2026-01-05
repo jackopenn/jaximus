@@ -34,8 +34,8 @@ def get_config():
     cfg.seed = 42
     cfg.exp_name = "nanochat100-base"
 
-    cfg.model.vocab_size = 524288
-    cfg.model.num_layers = 1
+    cfg.model.vocab_size = 50304
+    cfg.model.num_layers = 20
     cfg.model.hidden_dim = lambda: cfg.model.num_layers * 64
     cfg.model.num_attention_heads = lambda: max(1, (cfg.model.hidden_dim + 127) // 128)
     cfg.model.num_key_value_heads = lambda: cfg.model.num_attention_heads
@@ -75,10 +75,10 @@ def get_config():
     cfg.eval_every = -1
     cfg.checkpoint_every = 5000
     cfg.checkpoint_dir = "checkpoints"
-    cfg.xpu = "H100"
+    cfg.xpu = "v4"
     cfg.wandb = False
 
-    cfg.parallel.multihost = False
+    cfg.parallel.multihost = True
     cfg.parallel.strategy = "dp"
     cfg.parallel.data = jax.device_count()
 

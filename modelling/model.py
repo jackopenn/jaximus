@@ -1,6 +1,7 @@
 import jax
 from jax import numpy as jnp
 from flax import nnx
+from jax.sharding import auto_axes
 from modelling.layers.core import MLP, GLU, Attention, create_norm
 from modelling.layers.init import get_initializers
 from parallel import logical_to_physical, shard_init
@@ -196,11 +197,20 @@ class Model(nnx.Module):
                 rngs=rngs,
             )
 
+    # TODO: tmp since embeddings don't suppoer explicit sharding yet ...
+    @auto_axes
+    def _token_embedding(self, x):
+        return self.token_embedding(x)
+    
+    @auto_axes
+    def _pos_embedding(self, x):
+        return self.pos_embedding(x)
+
     def __call__(self, x, mask=None):
-        x = self.token_embedding(x)
+        x = self._token_embedding(x, out_sharding=logical_to_physical(("batch", "seq", "embed")))
 
         if self.position_embedding_type == "learned":
-            x = x + self.pos_embedding(jnp.arange(x.shape[1]))
+            x = x + self._pos_embedding(jnp.arange(x.shape[1]), out_sharding=logical_to_physical(("seq", "embed")))
 
         for layer in self.layers:
             x = layer(x, mask)

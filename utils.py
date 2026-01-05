@@ -38,6 +38,8 @@ def get_xpu_peak_flops(xpu_name):
         return 918e12
     elif xpu_name == "v5p":
         return 459e12
+    elif xpu_name == "v4":
+        return 275e12
     else:
         raise ValueError(f"don't have peak flops for {xpu_name}")
     

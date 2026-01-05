@@ -4,7 +4,7 @@ from datetime import datetime
 import warnings
 
 import jax
-from jax.sharding import AxisType
+from jax.sharding import AxisType, PartitionSpec as P
 import optax
 import orbax.checkpoint as ocp
 from flax import nnx
@@ -16,7 +16,7 @@ import wandb
 from data.hf import get_hf_dataset
 from generate import generate
 from modelling.model import Model
-from parallel import set_sharding_strategy
+from parallel import logical_to_physical, set_sharding_strategy
 from utils import DummyWandb, get_num_params_and_flops, pretty_print_samples, MetricLogger
 
 
@@ -89,13 +89,14 @@ def train(cfg):
     # validate config
     validate_config(cfg)
 
-    
     # init mesh and distributed
     if cfg.parallel.multihost:
         jax.distributed.initialize()
     mesh = jax.make_mesh((cfg.parallel.data, ), ("data", ), (AxisType.Explicit))
     jax.set_mesh(mesh)
-    print(f"{mesh=}")
+    main_process = jax.process_index() == 0
+    if main_process:
+        print(f"{mesh=}")
 
     # init tokenizer
     tokenizer = AutoTokenizer.from_pretrained(cfg.data.tokenizer_name)
@@ -118,35 +119,39 @@ def train(cfg):
     tx = optax.MultiSteps(cfg.optim.tx, every_k_schedule=cfg.optim.accum_steps)
     optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
 
-    # print model stats
-    num_params, num_flops_per_token = get_num_params_and_flops(model)
-    print(f"{num_params=}")
-    print(f"{num_flops_per_token=}")
+    if main_process:
+        # print model stats
+        num_params, num_flops_per_token = get_num_params_and_flops(model)
+        print(f"{num_params=}")
+        print(f"{num_flops_per_token=}")
 
+        # init checkpoint manager dir
+        checkpoint_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/{cfg.checkpoint_dir}/')
+
+        # init logging
+        wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
+        train_logger = MetricLogger(
+            batch_size=cfg.data.batch_size,
+            accum_steps=cfg.optim.accum_steps,
+            sequence_length=cfg.data.max_length,
+            num_flops_per_token=num_flops_per_token,
+            xpu_name=cfg.xpu,
+            wandb_run=wandb_run,
+        )
+
+        # init profiler
+        os.makedirs("profiles", exist_ok=True)
+        profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        profiler_options = jax.profiler.ProfileOptions()
+        profiler_options.host_tracer_level = 3
+        if jax.default_backend() == "gpu":
+            profiler_options.gpu_enable_nvtx_tracking = True
+            profiler_options.gpu_enable_cupti_activity_graph_trace = True
+            profiler_options.gpu_dump_graph_node_mapping = True
+    
     # init checkpoint manager
-    checkpoint_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/{cfg.checkpoint_dir}/')
     checkpoint_options = ocp.CheckpointManagerOptions(cleanup_tmp_directories=True)
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
-
-    # init logging
-    wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
-    train_logger = MetricLogger(
-        batch_size=cfg.data.batch_size,
-        accum_steps=cfg.optim.accum_steps,
-        sequence_length=cfg.data.max_length,
-        num_flops_per_token=num_flops_per_token,
-        xpu_name=cfg.xpu,
-        wandb_run=wandb_run,
-    )
-
-    # init profiler
-    profile_dir = f"profile_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    profiler_options = jax.profiler.ProfileOptions()
-    profiler_options.host_tracer_level = 3
-    if jax.default_backend() == "gpu":
-        profiler_options.gpu_enable_nvtx_tracking = True
-        profiler_options.gpu_enable_cupti_activity_graph_trace = True
-        profiler_options.gpu_dump_graph_node_mapping = True
 
     # https://flax.readthedocs.io/en/stable/guides/performance.html#caching-graph-node-traversals
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
@@ -157,13 +162,14 @@ def train(cfg):
     t0 = time.time()
     while step < cfg.max_steps:
         batch = next(train_iter)
+        batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(logical_to_physical(("batch", "seq")), x), batch)
 
         # train step (profile steps 10-20)
-        if micro_step == 10: 
+        if main_process and micro_step == 10: 
             jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
             loss, grad_norm = cached_train_step(batch)
-        if micro_step == 20:
+        if main_process and micro_step == 20:
             jax.profiler.stop_trace()
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")
 
