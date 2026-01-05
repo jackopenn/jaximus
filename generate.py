@@ -144,8 +144,8 @@ def generate(
     sample_fn = nnx.cached_partial(_sample_batch, model)
     generated = sample_fn(tokens, max_prompt_len, gen_len, top_k, temperature, key)
     
-    # Gather to host by converting to numpy (automatically gathers from all devices)
-    all_generated = np.asarray(generated)
+    # Gather from all hosts (for sharded array, returns fully replicated)
+    all_generated = jax.experimental.multihost_utils.process_allgather(generated, tiled=True)
     
     if not main_process:
         return None
