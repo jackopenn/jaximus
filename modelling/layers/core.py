@@ -1,30 +1,41 @@
-from functools import partial
 import jax
 from jax import numpy as jnp
-from jax.sharding import PartitionSpec as P
 from flax import nnx
-from typing import Callable
-
 from modelling.layers.position import apply_rope
+from parallel import logical_to_physical, shard_init
 
-from jax.sharding import PartitionSpec
+def create_norm(norm_type, num_features, epsilon, use_bias, rngs):
+    """Factory function to create normalization layers."""
+    if norm_type == "rms":
+        return nnx.RMSNorm(
+            num_features=num_features,
+            epsilon=epsilon,
+            dtype=jnp.float32,
+            use_scale=False,
+            rngs=rngs,
+        )
+    elif norm_type == "layer":
+        return nnx.LayerNorm(
+            num_features=num_features,
+            epsilon=epsilon,
+            use_bias=use_bias,
+            dtype=jnp.float32,
+            rngs=rngs,
+        )
+    else:
+        raise ValueError(f"Unknown norm_type: {norm_type}")
 
-from jax.experimental.pallas.ops.tpu import flash_attention
-from jax.experimental.pallas.ops.tpu import splash_attention
 
 class MLP(nnx.Module):
     def __init__(
         self,
-        hidden_dim: int,
-        intermediate_dim: int,
-        act_fn: str,
-        use_bias: bool,
-        rngs: jnp.ndarray,
-        dtype: jnp.dtype,
-        kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
-        bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
-        proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
-        shard_axis_name: str | None = None
+        hidden_dim,
+        intermediate_dim,
+        act_fn,
+        use_bias,
+        dtype,
+        inits,
+        rngs
     ):
         super().__init__()
         self.up_proj = nnx.Linear(
@@ -32,41 +43,38 @@ class MLP(nnx.Module):
             intermediate_dim,
             use_bias=use_bias,
             dtype=dtype,
+            kernel_init=shard_init(inits["mlp_up"], ("embed", "intermediate")),
+            bias_init=shard_init(inits["bias"], ("intermediate", )),
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, (shard_axis_name, None)),
-            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
         self.down_proj = nnx.Linear(
             intermediate_dim,
             hidden_dim,
             use_bias=use_bias,
             dtype=dtype,
+            kernel_init=shard_init(inits["mlp_down"], ("intermediate", "embed")),
+            bias_init=shard_init(inits["bias"], ("embed", )),
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(proj_init, (None, shard_axis_name)),
-            bias_init=nnx.with_partitioning(bias_init, (shard_axis_name,))
         )
-        # TODO: generalise this
-        self.act_fn = nnx.gelu if act_fn == "gelu" else nnx.silu if act_fn == "silu" else None
+        self.act_fn = act_fn
 
     def __call__(self, x):
-        x = self.up_proj(x)
+        x = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "intermediate")))
         x = self.act_fn(x)
-        x = self.down_proj(x)
+        x = self.down_proj(x, out_sharding=logical_to_physical(("batch", "seq", "embed")))
         return x
     
 
 class GLU(nnx.Module):
     def __init__(
         self,
-        hidden_dim: int,
-        intermediate_dim: int,
-        act_fn: Callable,
-        use_bias: bool,
-        rngs: jnp.ndarray,
-        dtype: jnp.dtype,
-        kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
-        bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
-        proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
+        hidden_dim,
+        intermediate_dim,
+        act_fn,
+        use_bias,
+        dtype,
+        inits,
+        rngs
     ):
         super().__init__()
         self.up_proj = nnx.Linear(
@@ -74,238 +82,147 @@ class GLU(nnx.Module):
             intermediate_dim,
             use_bias=use_bias,
             dtype=dtype,
+            kernel_init=shard_init(inits["mlp_up"], ("embed", "intermediate")),
+            bias_init=shard_init(inits["bias"], ("intermediate", )),
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("mlp_up_embed", "mlp_up_intermediate")),
-            bias_init=nnx.with_partitioning(bias_init, ("mlp_up_embed"))
         )
         self.gate_proj = nnx.Linear(
             hidden_dim,
             intermediate_dim,
-            use_bias=use_bias, 
+            use_bias=use_bias,
             dtype=dtype,
+            kernel_init=shard_init(inits["mlp_up"], ("intermediate", "intermediate")),
+            bias_init=shard_init(inits["bias"], ("intermediate", )),
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("mlp_up_embed", "mlp_up_intermediate")),
-            bias_init=nnx.with_partitioning(bias_init, ("mlp_up_embed"))
         )
         self.down_proj = nnx.Linear(
             intermediate_dim,
             hidden_dim,
             use_bias=use_bias,
             dtype=dtype,
+            kernel_init=shard_init(inits["mlp_down"], ("intermediate", "embed")),
+            bias_init=shard_init(inits["bias"], ("embed", )),
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(proj_init, ("mlp_down_intermediate", "mlp_down_embed")),
-            bias_init=nnx.with_partitioning(bias_init, ("mlp_down_intermediate"))
         )
         self.act_fn = act_fn
 
-
     def __call__(self, x):
-        # return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-        with jax.named_scope("glu_up"):
-            up = self.up_proj(x)
-        with jax.named_scope("glu_gate"):
-            gate = self.act_fn(self.gate_proj(x))
-        with jax.named_scope("glu_down"):
-            out = self.down_proj(gate * up)
+        up = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "intermediate")))
+        gate = self.gate_proj(x, out_sharding=logical_to_physical(("batch", "seq", "intermediate")))
+        out = self.down_proj(self.act_fn(gate) * up, out_sharding=logical_to_physical("batch", "seq", "embed"))
         return out
 
 
 class Attention(nnx.Module):
     def __init__(
         self,
-        hidden_dim: int,
-        num_attention_heads: int, 
-        num_key_value_heads: int,
-        head_dim: int,
-        rope_theta: int | None, 
-        qk_norm: bool,
-        use_bias: bool,
-        dtype: jnp.dtype, 
-        rngs: jnp.ndarray,
-        sliding_window: int | None = None,
-        attn_logit_softcapping: float | None = None,
-        kernel_init: nnx.Initializer = nnx.initializers.lecun_normal(),
-        bias_init: nnx.Initializer = nnx.initializers.zeros_init(),
-        proj_init: nnx.Initializer = nnx.initializers.lecun_normal(),
+        hidden_dim,
+        num_attention_heads, 
+        num_key_value_heads,
+        head_dim,
+        rope_theta, 
+        qk_norm,
+        qk_norm_type,
+        qk_norm_epsilon,
+        use_bias,
+        sliding_window,
+        dtype, 
+        inits,
+        rngs
     ):
         super().__init__()
-        self.hidden_dim = hidden_dim
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
         self.head_dim = head_dim
         self.rope_theta = rope_theta
         self.qk_norm = qk_norm
-        self.use_bias = use_bias
         self.dtype = dtype
-        self.attn_logit_softcapping = attn_logit_softcapping
         self.sliding_window = sliding_window
 
         self.q_proj = nnx.LinearGeneral(
             hidden_dim,
             (num_attention_heads, head_dim),
             use_bias=use_bias,
-            dtype=dtype, rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("qkv_embed", "q_heads", "head_dim")),
-            bias_init=nnx.with_partitioning(bias_init, ("q_heads", "head_dim"))
+            kernel_init=shard_init(inits["qkv"], ("embed", "q_heads", "head_dim")),
+            bias_init=shard_init(inits["bias"], ("heads", "head_dim")),
+            dtype=dtype,
+            rngs=rngs,
         )
         self.k_proj = nnx.LinearGeneral(
             hidden_dim,
             (num_key_value_heads, head_dim),
             use_bias=use_bias,
+            kernel_init=shard_init(inits["qkv"], ("embed", "kv_heads", "head_dim")),
+            bias_init=shard_init(inits["bias"], ("heads", "head_dim")),
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("qkv_embed", "kv_heads", "head_dim")),
-            bias_init=nnx.with_partitioning(bias_init, ("kv_heads", "head_dim"))
         )
         self.v_proj = nnx.LinearGeneral(
             hidden_dim,
-            (num_key_value_heads, head_dim), 
+            (num_key_value_heads, head_dim),
             use_bias=use_bias,
-            dtype=dtype, 
+            kernel_init=shard_init(inits["qkv"], ("embed", "kv_heads", "head_dim")),
+            bias_init=shard_init(inits["bias"], ("heads", "head_dim")),
+            dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(kernel_init, ("qkv_embed", "kv_heads", "head_dim")),
-            bias_init=nnx.with_partitioning(bias_init, ("kv_heads", "head_dim"))
         )
 
         self.o_proj = nnx.LinearGeneral(
             (num_attention_heads, head_dim),
             hidden_dim,
             use_bias=use_bias,
+            axis=(-2, -1),
+            kernel_init=shard_init(inits["o_proj"], ("heads", "head_dim", "embed")),
+            bias_init=shard_init(inits["bias"], ("embed", )),
             dtype=dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(proj_init, ("o_heads", "head_dim", "o_embed")),
-            bias_init=nnx.with_partitioning(bias_init, ("o_embed",)),
-            axis=(-2, -1)
-            )
-
-        if self.qk_norm:
-            self.q_norm = nnx.RMSNorm(
-                head_dim,
-                dtype=jnp.float32,
-                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("norm",)),
-                rngs=rngs
-            )
-            self.k_norm = nnx.RMSNorm(
-                head_dim,
-                dtype=jnp.float32,
-                scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("norm",)),
-                rngs=rngs)
-
-        # TODO: add support for attn_logit_softcapping on non-TPU
-        if jax.default_backend() != "tpu" and self.attn_logit_softcapping is not None:
-            raise ValueError("attn_logit_softcapping is not supported on non-TPU")
-
-    def _splash_attention_fn(self, seq_len: int):
-        mask=splash_attention.CausalMask((seq_len, seq_len))
-
-        if self.sliding_window:
-            sliding_window_mask=splash_attention.SlidingWindowMask((seq_len, seq_len))
-            mask = splash_attention.LogicalAnd(mask, sliding_window_mask)
-
-        mask=splash_attention.MultiHeadMask(masks=(mask,) * self.num_attention_heads),
-
-        return splash_attention.make_splash_mha(
-            mask=mask,
-            head_shards=1,
-            q_seq_shards=1,
-            attn_logit_soft_cap=self.attn_logit_softcapping
         )
 
+        if self.qk_norm:
+            if qk_norm_type is None:
+                raise ValueError("qk_norm_type must be specified when qk_norm is True")
+            if qk_norm_epsilon is None:
+                raise ValueError("qk_norm_epsilon must be specified when qk_norm is True")
+            self.q_norm = create_norm(
+                norm_type=qk_norm_type,
+                num_features=head_dim,
+                epsilon=qk_norm_epsilon,
+                use_bias=use_bias,
+                rngs=rngs,
+            )
+            self.k_norm = create_norm(
+                norm_type=qk_norm_type,
+                num_features=head_dim,
+                epsilon=qk_norm_epsilon,
+                use_bias=use_bias,
+                rngs=rngs,
+            )
 
-    def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-
-        with jax.named_scope("q_proj"):
-            q = self.q_proj(x)
-        with jax.named_scope("k_proj"):
-            k = self.k_proj(x)
-        with jax.named_scope("v_proj"):
-            v = self.v_proj(x)
+    def __call__(self, x, mask=None):
+        q = self.q_proj(x, out_sharding=logical_to_physical(("batch", "seq", "q_heads", "head_dim")))
+        k = self.k_proj(x, out_sharding=logical_to_physical(("batch", "seq", "kv_heads", "head_dim")))
+        v = self.v_proj(x, out_sharding=logical_to_physical(("batch", "seq", "kv_heads", "head_dim")))
 
         if self.qk_norm:
-            with jax.named_scope("qk_norm"):
-                q = self.q_norm(q).astype(self.dtype)
-                k = self.k_norm(k).astype(self.dtype)
+            q = self.q_norm(q).astype(self.dtype)
+            k = self.k_norm(k).astype(self.dtype)
 
         if self.rope_theta:
-            with jax.named_scope("rope"):
-                positions = jnp.arange(x.shape[1])[None, :]
-                q = apply_rope(q, positions, base_frequency=self.rope_theta)
-                k = apply_rope(k, positions, base_frequency=self.rope_theta)
-        
-        
-        if jax.default_backend() == "tpu":
-            q = jax.lax.with_sharding_constraint(q, P("data", None, None, None))
-            k = jax.lax.with_sharding_constraint(k, P("data", None, None, None))
-            v = jax.lax.with_sharding_constraint(v, P("data", None, None, None))
+            positions = jnp.arange(x.shape[1])[None, :]
+            q = apply_rope(q, positions, base_frequency=self.rope_theta)
+            k = apply_rope(k, positions, base_frequency=self.rope_theta)
 
-            with jax.named_scope("repeat_kv_and_swap_axes"):
-                k = jnp.repeat(k, self.num_attention_heads // self.num_key_value_heads, axis=2)
-                v = jnp.repeat(v, self.num_attention_heads // self.num_key_value_heads, axis=2)
-                
-                q = jnp.swapaxes(q, 1, 2)
-                k = jnp.swapaxes(k, 1, 2)
-                v = jnp.swapaxes(v, 1, 2)
+        if mask is not None:
+            mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
 
-            with jax.named_scope("attention"):
-            #     att = jax.shard_map(
-            #     partial(
-            #         flash_attention.flash_attention,
-            #         causal=True,
-            #         block_sizes=flash_attention.BlockSizes(
-            #             block_q=512,
-            #             block_k_major=1024,
-            #             block_k=512,
-            #             block_b=4,
+        # handles repeating kv for GQA
+        att = jax.nn.dot_product_attention(
+            query=q, key=k, value=v,
+            is_causal=True,
+            implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
+            mask=mask,
+            local_window_size=(self.sliding_window, 0) if self.sliding_window else None
+        )
 
-            #             block_q_major_dkv=512,
-            #             block_k_major_dkv=1024,
-            #             block_k_dkv=512,
-            #             block_q_dkv=512,
-
-            #             block_k_major_dq=1024,
-            #             block_k_dq=512,
-            #             block_q_dq=512,
-            #         )
-            #     ),
-            #     in_specs=(
-            #         P("data", None, None, None),
-            #         P("data", None, None, None),
-            #         P("data", None, None, None),
-            #     ),
-            #     out_specs=P("data", None, None, None),
-            #     check_vma=False
-            # )(q, k, v)
-                att = jax.vmap(
-                        jax.shard_map(
-                            partial(self._splash_attention_fn, seq_len=x.shape[1]),
-                            in_specs=(
-                                P("data", None, None, None),
-                                P("data", None, None, None),
-                                P("data", None, None, None),
-                            ),
-                            out_specs=P("data", None, None, None),
-                            check_vma=False
-                        ),
-                        in_axes=(0, 0, 0)
-                    )(q, k, v)
-            
-            att = jnp.swapaxes(att, 1, 2)
-        else:
-            if mask is not None:
-                with jax.named_scope("make_mask"):
-                    mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
-            with jax.named_scope("attention"):
-                att = jax.nn.dot_product_attention(
-                    query=q, key=k, value=v,
-                    is_causal=True,
-                    implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
-                    mask=mask,
-                    # local_window_size=(self.sliding_window,)
-                )
-
-        with jax.named_scope("o_proj"):
-            out = self.o_proj(att)
-
+        out = self.o_proj(att, out_sharding=logical_to_physical(("batch", "seq", "embed")))
         return out
-    
-

@@ -1,111 +1,214 @@
-from typing import Callable
+import jax
 from jax import numpy as jnp
 from flax import nnx
-from modelling.layers.core import MLP, Attention
+from modelling.layers.core import MLP, GLU, Attention, create_norm
+from modelling.layers.init import get_initializers
+from parallel import logical_to_physical, shard_init
 
 
 class Layer(nnx.Module):
     def __init__(
             self,
-            hidden_dim: int,
-            num_attention_heads: int,
-            head_dim: int,
-            intermediate_dim: int,
-            act_fn: Callable,
-            layer_norm_epsilon: float,
-            use_bias: bool,
-            dtype: jnp.dtype,
-            kernel_init: nnx.Initializer,
-            bias_init: nnx.Initializer,
-            proj_init: nnx.Initializer,
-            rngs: nnx.Rngs,
+            hidden_dim,
+            num_attention_heads,
+            num_key_value_heads,
+            head_dim,
+            intermediate_dim,
+            act_fn,
+            norm_type,
+            norm_position,
+            norm_epsilon,
+            mlp_type,
+            attn_use_bias,
+            mlp_use_bias,
+            rope_theta,
+            qk_norm,
+            qk_norm_type,
+            qk_norm_epsilon,
+            sliding_window,
+            dtype,
+            inits,
+            rngs,
     ):
         super().__init__()
+        self.norm_position = norm_position
+        
         self.attention = Attention(
             hidden_dim=hidden_dim,
             num_attention_heads=num_attention_heads,
-            num_key_value_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
             head_dim=head_dim,
-            rope_theta=None,
-            qk_norm=False,
-            use_bias=use_bias,
+            rope_theta=rope_theta,
+            qk_norm=qk_norm,
+            qk_norm_type=qk_norm_type,
+            qk_norm_epsilon=qk_norm_epsilon,
+            use_bias=attn_use_bias,
             dtype=dtype,
-            kernel_init=kernel_init,
-            bias_init=bias_init,
-            proj_init=proj_init,
+            sliding_window=sliding_window,
+            inits=inits,
             rngs=rngs,
         )
-        self.ln_1 = nnx.LayerNorm(
+        
+        self.ln_1 = create_norm(
+            norm_type=norm_type,
             num_features=hidden_dim,
-            use_bias=use_bias,
-            epsilon=layer_norm_epsilon,
-            dtype=jnp.float32, rngs=rngs
+            epsilon=norm_epsilon,
+            use_bias=attn_use_bias,
+            rngs=rngs,
         )
-        self.mlp = MLP(hidden_dim, intermediate_dim, act_fn, use_bias, dtype=dtype, rngs=rngs, kernel_init=kernel_init, bias_init=bias_init, proj_init=proj_init)
-        self.ln_2 = nnx.LayerNorm(num_features=hidden_dim, use_bias=use_bias, epsilon=layer_norm_epsilon, dtype=jnp.float32, rngs=rngs)
+        
+        MLPFactory = MLP if mlp_type == "mlp" else GLU
+        self.mlp = MLPFactory(
+            hidden_dim=hidden_dim,
+            intermediate_dim=intermediate_dim,
+            act_fn=act_fn,
+            use_bias=mlp_use_bias,
+            dtype=dtype,
+            inits=inits,
+            rngs=rngs,
+        )
+        
+        self.ln_2 = create_norm(
+            norm_type=norm_type,
+            num_features=hidden_dim,
+            epsilon=norm_epsilon,
+            use_bias=mlp_use_bias,
+            rngs=rngs,
+        )
 
-    def __call__(self, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        x = x + self.attention(self.ln_1(x), mask=mask)
-        x = x + self.mlp(self.ln_2(x))
+    def __call__(self, x, mask=None):
+        if self.norm_position == "pre":
+            x = x + self.attention(self.ln_1(x), mask=mask)
+            x = x + self.mlp(self.ln_2(x))
+        else:  # post-norm
+            x = self.ln_1(x + self.attention(x, mask=mask))
+            x = self.ln_2(x + self.mlp(x))
         return x
 
 
 class Model(nnx.Module):
-    def __init__(self, config, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        vocab_size,
+        hidden_dim,
+        num_layers,
+        num_attention_heads,
+        num_key_value_heads,
+        head_dim,
+        intermediate_dim,
+        max_seq_len,
+        norm_type,
+        norm_position,
+        norm_epsilon,
+        mlp_type,
+        act_fn,
+        attn_use_bias,
+        mlp_use_bias,
+        lm_head_use_bias,
+        qk_norm,
+        qk_norm_type,
+        qk_norm_epsilon,
+        sliding_window,
+        position_embedding_type,
+        rope_theta,
+        tie_word_embeddings,
+        init_strategy,
+        softcap,
+        dtype,
+        rngs,
+    ):
         super().__init__()
-        self.config = config
-        self.dtype = getattr(jnp, config.dtype)
 
-        std = 0.02
-        resid_scale = 1.0 / jnp.sqrt(2 * config.num_layers)
-        self.kernel_init = nnx.initializers.normal(stddev=std)
-        self.proj_init   = nnx.initializers.normal(stddev=std * resid_scale)
-        self.bias_init   = nnx.initializers.zeros_init()
+        self.hidden_dim = hidden_dim
+        self.position_embedding_type = position_embedding_type
+        self.tie_word_embeddings = tie_word_embeddings
+        self.softcap = softcap
+
+        # used to estimate model flops 
+        self.num_layers = num_layers
+        self.num_attention_heads = num_attention_heads
+        self.head_dim = head_dim
+        self.max_seq_len = max_seq_len
+        
+        dtype = getattr(jnp, dtype)
+        act_fn = (lambda x: jnp.square(jax.nn.relu(x))) if act_fn == "relu_squared" else getattr(jax.nn, act_fn)
+        inits = get_initializers(init_strategy, hidden_dim)
 
         self.token_embedding = nnx.Embed(
-            num_embeddings=config.vocab_size,
-            features=config.hidden_dim,
-            dtype=self.dtype,
-            embedding_init=self.kernel_init,
+            num_embeddings=vocab_size,
+            features=hidden_dim,
+            dtype=dtype,
+            embedding_init=shard_init(inits["embed"], ("vocab", "embed")),
             rngs=rngs,
         )
-        self.pos_embedding = nnx.Embed(
-            num_embeddings=config.max_seq_len,
-            features=config.hidden_dim,
-            dtype=self.dtype,
-            embedding_init=self.kernel_init,
-            rngs=rngs,
-        )
+        
+        if position_embedding_type == "learned":
+            self.pos_embedding = nnx.Embed(
+                num_embeddings=max_seq_len,
+                features=hidden_dim,
+                dtype=dtype,
+                embedding_init=shard_init(inits["embed"], ("seq", "embed")),
+                rngs=rngs,
+            )
+        
         self.layers = nnx.List([
             Layer(
-                hidden_dim=config.hidden_dim,
-                num_attention_heads=config.num_attention_heads,
-                head_dim=config.head_dim,
-                intermediate_dim=config.intermediate_dim,
-                act_fn=config.act_fn,
-                layer_norm_epsilon=config.layer_norm_epsilon,
-                use_bias=config.use_bias,
-                dtype=self.dtype,
-                kernel_init=self.kernel_init,
-                bias_init=self.bias_init,
-                proj_init=self.proj_init,
-                rngs=rngs
+                hidden_dim=hidden_dim,
+                num_attention_heads=num_attention_heads,
+                num_key_value_heads=num_key_value_heads,
+                head_dim=head_dim,
+                intermediate_dim=intermediate_dim,
+                act_fn=act_fn,
+                norm_type=norm_type,
+                norm_position=norm_position,
+                norm_epsilon=norm_epsilon,
+                mlp_type=mlp_type,
+                attn_use_bias=attn_use_bias,
+                mlp_use_bias=mlp_use_bias,
+                rope_theta=rope_theta if position_embedding_type == "rope" else None,
+                qk_norm=qk_norm,
+                qk_norm_type=qk_norm_type,
+                qk_norm_epsilon=qk_norm_epsilon if qk_norm else None,
+                sliding_window=sliding_window,
+                dtype=dtype,
+                inits=inits,
+                rngs=rngs,
             )
-            for _ in range(config.num_layers)
+            for _ in range(num_layers)
         ])
-        self.ln_f = nnx.LayerNorm(
-            num_features=config.hidden_dim,
-            use_bias=config.use_bias,
-            epsilon=config.layer_norm_epsilon,
-            dtype=jnp.float32,
+        
+        self.ln_f = create_norm(
+            norm_type=norm_type,
+            num_features=hidden_dim,
+            epsilon=norm_epsilon,
+            use_bias=attn_use_bias,
             rngs=rngs,
         )
+        
+        if not tie_word_embeddings:
+            self.lm_head = nnx.Linear(
+                in_features=hidden_dim,
+                out_features=vocab_size,
+                use_bias=lm_head_use_bias,
+                kernel_init=shard_init(inits["lm_head"], ("vocab", "embed")),
+                bias_init=shard_init(inits["bias"], ("vocab", )),
+                dtype=dtype,
+                rngs=rngs,
+            )
 
-    def __call__(self, input_ids: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        x = self.token_embedding(input_ids)
-        x = x + self.pos_embedding(jnp.arange(input_ids.shape[1]))
+    def __call__(self, x, mask=None):
+        x = self.token_embedding(x)
+
+        if self.position_embedding_type == "learned":
+            x = x + self.pos_embedding(jnp.arange(x.shape[1]))
+
         for layer in self.layers:
             x = layer(x, mask)
         x = self.ln_f(x)
-        return self.token_embedding.attend(x)
-    
+
+        logits = self.lm_head(x, out_sharding=logical_to_physical(("batch", "seq", "vocab"))) if self.lm_head else self.token_embedding.attend(x)
+
+        if self.softcap:
+            logits = self.softcap * jnp.tanh(logits.astype(jnp.float32) / self.softcap)
+            
+        return logits

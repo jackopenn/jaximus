@@ -30,8 +30,6 @@ def get_hf_dataset(
     streaming=True,
     num_proc=None,
 ):
-    """ assumes hf has a field called 'text' """
-
     if streaming:
         num_proc = None
 
