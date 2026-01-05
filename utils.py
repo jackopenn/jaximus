@@ -93,10 +93,11 @@ class MetricLogger:
 
 
     def _pretty_print(self, metrics, step):
-        loss = metrics.pop("loss")
-        print_string = f"step: {step}, loss: {self._human_format(loss)}"
+        
+        print_string = f"step: {step}, loss: {self._human_format(metrics['loss'])}"
         for k, v in metrics.items():
-            print_string += f", {k}: {self._human_format(v)}"
+            if k != "loss":
+                print_string += f", {k}: {self._human_format(v)}"
         print(print_string)
 
 
