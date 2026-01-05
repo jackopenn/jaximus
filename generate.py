@@ -77,7 +77,8 @@ def generate(
             "Once upon a time, there was a",
         ]
     
-    n_processes = jax.process_count()
+    n_devices = jax.device_count()  # total devices across all hosts
+    n_local_devices = jax.local_device_count()  # devices on this host
     process_idx = jax.process_index()
     main_process = process_idx == 0
     
@@ -104,12 +105,12 @@ def generate(
     # Each prompt repeated n_samples times
     real_batch_size = len(prompts) * n_samples
     
-    # Pad batch to be divisible by process count
-    remainder = real_batch_size % n_processes
-    pad_samples = (n_processes - remainder) % n_processes
+    # Pad batch to be divisible by total device count (for sharding)
+    remainder = real_batch_size % n_devices
+    pad_samples = (n_devices - remainder) % n_devices
     global_batch_size = real_batch_size + pad_samples
     
-    local_batch_size = global_batch_size // n_processes
+    local_batch_size = global_batch_size // jax.process_count()
     
     # Build full token array (all processes build the same thing, then slice)
     all_tokens = []
