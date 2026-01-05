@@ -242,11 +242,11 @@ def train(cfg):
             if main_process :
                 train_logger.log({"loss": loss, "grad_norm": grad_norm, "step_time": step_time, "step": step})
 
-            # # generate samples (all processes must call generate for TP compatibility)
-            # if step > 0 and step % cfg.generate_every == 0:
-            #     samples = generate(model, tokenizer)
-            #     if samples is not None:  # only main process gets results
-            #         pretty_print_samples(samples)
+            # generate samples
+            if step > 0 and step % cfg.generate_every == 0:
+                samples = generate(model, tokenizer)
+                if main_process:
+                    pretty_print_samples(samples)
 
             # checkpoint
             if step > 0 and step % cfg.checkpoint_every == 0:
