@@ -1,5 +1,12 @@
-from functools import partial
 import os
+
+# Must initialize distributed JAX BEFORE any other JAX imports
+# Check env var to determine if multihost mode is needed
+if os.environ.get("JAX_MULTIHOST", "0") == "1":
+    import jax
+    jax.distributed.initialize()
+
+from functools import partial
 import time
 from datetime import datetime
 import warnings
@@ -88,9 +95,7 @@ def train_step(model, optimizer, batch):
 
 def train(cfg):
 
-    # init mesh and distributed
-    if cfg.parallel.multihost:
-        jax.distributed.initialize()
+    # init mesh
     mesh = jax.make_mesh((cfg.parallel.data, ), ("data", ), (AxisType.Explicit))
     jax.set_mesh(mesh)
     main_process = jax.process_index() == 0
