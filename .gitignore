@@ -7,3 +7,4 @@ artifacts/
 saved/
 uv.lock
 .DS_Store
+profiles/

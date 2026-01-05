@@ -237,13 +237,14 @@ def train(cfg):
             t0 = time.time()
 
             # log metrics
-            if main_process:
+            if main_process :
                 train_logger.log({"loss": loss, "grad_norm": grad_norm, "step_time": step_time, "step": step})
 
-            # generate samples
-            if main_process and step > 0 and step % cfg.generate_every == 0:
+            # generate samples (all processes must call generate for TP compatibility)
+            if step > 0 and step % cfg.generate_every == 0:
                 samples = generate(model, tokenizer)
-                pretty_print_samples(samples)
+                if samples is not None:  # only main process gets results
+                    pretty_print_samples(samples)
 
             # checkpoint
             if step > 0 and step % cfg.checkpoint_every == 0:
@@ -254,7 +255,8 @@ def train(cfg):
 
             step += 1
     
-    wandb_run.finish()
+    if main_process:
+        wandb_run.finish()
 
 if __name__ == "__main__":
     sws_run(train)

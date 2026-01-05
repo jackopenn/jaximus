@@ -2,37 +2,60 @@ from typing import List
 from functools import partial
 import jax
 from jax import numpy as jnp
+from jax.sharding import PartitionSpec as P, NamedSharding
 from flax import nnx
 from transformers import AutoTokenizer
 import wandb
 import orbax.checkpoint as ocp
 
 
-@partial(
-    jax.jit,
-    static_argnames=("prompt_length", "sample_length", "top_k", "temperature"),
-    donate_argnums=(1,)
-)
-def sample(model, batch, mask, prompt_length, sample_length, top_k, temperature, key=jax.random.PRNGKey(0)):
+def _make_sample_fn(model):
+    """Create a jitted sample function that works with any sharding strategy."""
+    
+    @partial(
+        jax.jit,
+        static_argnames=("prompt_length", "sample_length", "top_k", "temperature"),
+        donate_argnums=(0,)
+    )
+    def sample(batch, mask, prompt_length, sample_length, top_k, temperature, key=jax.random.PRNGKey(0)):
 
-    def body_fn(i, carry):
-        batch, mask, sample_idx, key = carry
-        key, subkey = jax.random.split(key)
+        def body_fn(i, carry):
+            batch, mask, sample_idx, key = carry
+            key, subkey = jax.random.split(key)
+        
+            logits = model(batch, mask)
+            logits = logits[:, sample_idx, :].astype(jnp.float32) / temperature
+            values, _ = jax.lax.top_k(logits, k=top_k)
+            kth_value = values[:, -1]
+            logits = jnp.where(logits < kth_value[:, jnp.newaxis], -jnp.inf, logits)
+            next_token = jax.random.categorical(subkey, logits)
+            sample_idx += 1
+            batch = batch.at[:, sample_idx].set(next_token)
+            mask = mask.at[:, sample_idx].set(jnp.ones_like(next_token, dtype=jnp.bool_))
+            return batch, mask, sample_idx, key
+        
+        sample_idx = prompt_length - 1
+        batch, _, _, _ = jax.lax.fori_loop(0, sample_length, body_fn, (batch, mask, sample_idx, key))
+        return batch
     
-        logits = model(batch, mask)
-        logits = logits[:, sample_idx, :].astype(jnp.float32) / temperature
-        values, _ = jax.lax.top_k(logits, k=top_k)
-        kth_value = values[:, -1]
-        logits = jnp.where(logits < kth_value[:, jnp.newaxis], -jnp.inf, logits)
-        next_token = jax.random.categorical(subkey, logits)
-        sample_idx += 1
-        batch = batch.at[:, sample_idx].set(next_token)
-        mask = mask.at[:, sample_idx].set(jnp.ones_like(next_token, dtype=jnp.bool_))
-        return batch, mask, sample_idx, key
-    
-    sample_idx = prompt_length - 1
-    batch, _, _, _ = jax.lax.fori_loop(0, sample_length, body_fn, (batch, mask, sample_idx, key))
-    return batch
+    return sample
+
+
+def _replicate_array(arr):
+    """Replicate array across all devices (for generation with TP/sharded models)."""
+    mesh = jax.get_mesh()
+    if mesh is None or mesh.empty:
+        # No mesh set, just return as-is (single device)
+        return arr
+    # Fully replicated sharding - same data on all devices
+    sharding = NamedSharding(mesh, P())
+    return jax.device_put(arr, sharding)
+
+
+def _gather_to_host(arr):
+    """Gather a potentially sharded array to host memory as numpy."""
+    # This handles both sharded and replicated arrays
+    return jnp.asarray(arr)
 
 
 def generate(
@@ -52,10 +75,21 @@ def generate(
     top_k=10,
     temperature=1.0
 ):
+    """
+    Generate samples from the model. Works with any sharding strategy (DP, TP, FSDP).
+    
+    For TP/sharded models: inputs are replicated across all devices, the model
+    computes with its sharded weights, and outputs are gathered back.
+    
+    IMPORTANT for multi-host: ALL processes must call this function (don't guard
+    with `if main_process`). For TP, the forward pass requires all hosts. Returns
+    results only on main process (None on others).
+    """
+    main_process = jax.process_index() == 0
+    sample = _make_sample_fn(model)
 
     if not tokenizer.pad_token:
         tokenizer.pad_token = tokenizer.bos_token
-
 
     # create a batch of size (n_samples * len(prompts), max_length) left padded with pad_token_id
     prompts_tokens = tokenizer.batch_encode_plus(prompts)['input_ids']
@@ -71,8 +105,16 @@ def generate(
     generated_tokens = []
     for prompt_tokens, mask, prompt_token_length in zip(prompts_tokens, masks, prompt_token_lengths):
         sample_length = max_length - prompt_token_length
-        # print(prompt_tokens)
-        generated_tokens.append(sample(model, prompt_tokens, mask, prompt_token_length, sample_length, top_k, temperature))
+        # Replicate inputs across all devices (required for TP where model is sharded)
+        prompt_tokens = _replicate_array(prompt_tokens)
+        mask = _replicate_array(mask)
+        result = sample(prompt_tokens, mask, prompt_token_length, sample_length, top_k, temperature)
+        # Gather result back (in case output is sharded)
+        generated_tokens.append(_gather_to_host(result))
+
+    # Only main process returns decoded results
+    if not main_process:
+        return None
 
     decoded_tokens = tokenizer.batch_decode(jnp.concatenate(generated_tokens, axis=0))
     
