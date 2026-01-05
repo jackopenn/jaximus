@@ -8,6 +8,8 @@ from transformers import AutoTokenizer
 import wandb
 import orbax.checkpoint as ocp
 
+from parallel import logical_to_physical
+
 
 def _make_sample_fn(model):
     """Create a jitted sample function that works with any sharding strategy."""
@@ -42,7 +44,7 @@ def _make_sample_fn(model):
 
 
 def _replicate_array(arr):
-    return jax.device_put(arr, P())
+    return jax.device_put(arr, logical_to_physical(("batch", "seq")))
     
 
 
@@ -65,7 +67,7 @@ def generate(
         "Once upon a time, there was a",
     ],
     max_length=64,
-    n_samples=5,
+    n_samples=16,
     top_k=10,
     temperature=1.0
 ):
