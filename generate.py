@@ -1,6 +1,7 @@
 from functools import partial
 import jax
 from jax import numpy as jnp
+import numpy as np
 from flax import nnx
 
 from parallel import logical_to_physical
@@ -120,14 +121,15 @@ def generate(
         for _ in range(pad_samples):
             all_tokens.append(all_tokens[-1])
     
-    all_tokens = jnp.array(all_tokens)  # [global_batch_size, max_length]
+    # Use numpy array (not jax) so it stays local to this process
+    all_tokens = np.array(all_tokens, dtype=np.int32)  # [global_batch_size, max_length]
     
     # Each process takes its slice
     start_idx = process_idx * local_batch_size
     end_idx = start_idx + local_batch_size
     local_tokens = all_tokens[start_idx:end_idx]
     
-    # Create sharded array from local data
+    # Create sharded JAX array from local numpy data
     tokens = jax.make_array_from_process_local_data(
         logical_to_physical(("batch", "seq")),
         local_tokens
