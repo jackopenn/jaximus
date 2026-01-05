@@ -8,6 +8,8 @@ from transformers import AutoTokenizer
 import wandb
 import orbax.checkpoint as ocp
 
+from parallel import logical_to_physical
+
 
 def _make_sample_fn(model):
     """Create a jitted sample function that works with any sharding strategy."""
@@ -42,14 +44,8 @@ def _make_sample_fn(model):
 
 
 def _replicate_array(arr):
-    """Replicate array across all devices (for generation with TP/sharded models)."""
-    mesh = jax.get_mesh()
-    if mesh is None or mesh.empty:
-        # No mesh set, just return as-is (single device)
-        return arr
-    # Fully replicated sharding - same data on all devices
-    sharding = NamedSharding(mesh, P())
-    return jax.device_put(arr, sharding)
+    return jax.device_put(arr, logical_to_physical(("batch", "seq")))
+    
 
 
 def _gather_to_host(arr):
