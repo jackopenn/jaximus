@@ -252,7 +252,8 @@ def train(cfg):
             if step > 0 and step % cfg.checkpoint_every == 0:
                 checkpoint_manager.save(step, args=ocp.args.StandardSave(nnx.state(model)))
                 checkpoint_manager.wait_until_finished() # must wait before logging to wandb
-                wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
+                if main_process:
+                    wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
 
             step += 1
         
