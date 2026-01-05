@@ -183,8 +183,6 @@ def train(cfg):
         print(f"{num_params=}")
         print(f"{num_flops_per_token=}")
 
-        # init checkpoint manager dir
-        checkpoint_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/{cfg.checkpoint_dir}/')
 
         # init logging
         wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
@@ -208,6 +206,7 @@ def train(cfg):
             profiler_options.gpu_dump_graph_node_mapping = True
     
     # init checkpoint manager
+    checkpoint_dir = ocp.test_utils.erase_and_create_empty(f'{os.getcwd()}/{cfg.checkpoint_dir}/')
     checkpoint_options = ocp.CheckpointManagerOptions(cleanup_tmp_directories=True)
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
 
@@ -248,8 +247,9 @@ def train(cfg):
             # checkpoint
             if step > 0 and step % cfg.checkpoint_every == 0:
                 checkpoint_manager.save(step, args=ocp.args.StandardSave(nnx.state(model)))
-                checkpoint_manager.wait_until_finished() # must wait before logging to wandb
-                wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
+                # TODO: make work eith gcloud
+                # checkpoint_manager.wait_until_finished() # must wait before logging to wandb
+                # wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
 
             step += 1
     
