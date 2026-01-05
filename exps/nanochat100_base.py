@@ -92,7 +92,7 @@ def get_config():
         max_steps=max_steps,
     )
     adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
-    cfg.optim.tx = lambda: lambda:optax.chain(
+    cfg.optim.tx = lambda: optax.chain(
         optax.clip_by_global_norm(1.0),
         optax.partition(
             {

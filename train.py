@@ -117,7 +117,7 @@ def train(cfg):
     model = Model(rngs=nnx.Rngs(cfg.seed), **cfg.model.to_dict())
     
     # init optimizer
-    tx = optax.MultiSteps(cfg.optim.tx(), every_k_schedule=cfg.optim.accum_steps)
+    tx = optax.MultiSteps(cfg.optim.tx, every_k_schedule=cfg.optim.accum_steps)
     optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
 
     if main_process:
