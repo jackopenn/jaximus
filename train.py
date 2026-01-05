@@ -88,8 +88,8 @@ def train_step(model, optimizer, batch):
 def train(cfg):
 
     # init mesh and distributed
-    if cfg.parallel.multihost:
-        jax.distributed.initialize()
+    # if cfg.parallel.multihost:
+        # jax.distributed.initialize()
     mesh = jax.make_mesh((cfg.parallel.data, ), ("data", ), (AxisType.Explicit))
     jax.set_mesh(mesh)
     main_process = jax.process_index() == 0
@@ -199,4 +199,5 @@ def train(cfg):
     wandb_run.finish()
 
 if __name__ == "__main__":
+    jax.distributed.initialize()
     sws_run(train)
