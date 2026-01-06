@@ -125,7 +125,7 @@ def _newton_schulz_iterator(x: jax.Array, coeffs: jax.Array) -> jax.Array:
   # The NS step has the property f(X) = f(X^T)^T. That is, we can get equivalent
   # result by tranposing input and output. In particular, we may tranpose X
   # when rows > cols for effciency.
-  a = jax.matmul(x, x.T, out_sharding=jax.typeof(x).sharding)
+  a = jnp.matmul(x, x.T, out_sharding=jax.typeof(x).sharding)
   b = coeffs[1] * a + coeffs[2] * a @ a
   return coeffs[0] * x + b @ x
 
