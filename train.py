@@ -216,10 +216,10 @@ def train(cfg):
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     train_iter = iter(dataset)
-    step = 0
+    step = 1
     micro_step = 0
     t0 = time.time()
-    while step < cfg.max_steps:
+    while step <= cfg.max_steps:
         batch = next(train_iter)
         batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(logical_to_physical(("batch", "seq")), x), batch)
 
@@ -243,27 +243,29 @@ def train(cfg):
                 train_logger.log({"loss": loss, "grad_norm": grad_norm, "step_time": step_time, "step": step})
 
             # generate samples
-            if step > 0 and step % cfg.generate_every == 0:
+            if step % cfg.generate_every == 0:
                 samples = generate(model, tokenizer)
                 if main_process:
                     pretty_print_samples(samples)
 
             # checkpoint
-            if step > 0 and step % cfg.checkpoint_every == 0:
+            if step % cfg.checkpoint_every == 0:
                 checkpoint_manager.save(step, args=ocp.args.StandardSave(nnx.state(model)))
                 checkpoint_manager.wait_until_finished() # must wait before logging to wandb
                 if main_process:
                     wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
 
             step += 1
-        
-    # final checkpoint (don't do if we just did)
-    if step % cfg.checkpoint_every != 0:
-        checkpoint_manager.save(step, args=ocp.args.StandardSave(nnx.state(model)))
+    
+    # final checkpoint (skip if last step was already checkpointed)
+    if cfg.max_steps % cfg.checkpoint_every != 0:
+        checkpoint_manager.save(cfg.max_steps, args=ocp.args.StandardSave(nnx.state(model)))
         checkpoint_manager.wait_until_finished() # must wait before logging to wandb
-        wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
+        if main_process:
+            wandb_run.log_artifact(f"{checkpoint_dir}/{cfg.max_steps}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{cfg.max_steps}"])
     
     if main_process:
+        train_logger.flush()
         wandb_run.finish()
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ def get_num_params_and_flops(model):
 
     try:
         embed_params += model.pos_embedding.embedding.size
-    except:
+    except AttributeError:
         pass
 
     l, h, q, t = (
@@ -72,24 +72,21 @@ class MetricLogger:
         self.tokens_per_batch = batch_size * accum_steps * sequence_length
         self.num_devices = jax.device_count()
         self.xpu_peak_flops = get_xpu_peak_flops(xpu_name) * self.num_devices
-        self.cpu_device = jax.devices("cpu")[0]
         self.prev_metrics = None
         self.tokens_consumed = 0
 
 
-    def _human_format(self, num: float, billions: bool = False, divide_by_1024: bool = False) -> str:
-    # https://github.com/huggingface/nanotron/blob/7bc9923285a03069ebffe994379a311aceaea546/src/nanotron/logging/base.py#L268
+    def _human_format(self, num: float, divide_by_1024: bool = False) -> str:
+        # https://github.com/huggingface/nanotron/blob/7bc9923285a03069ebffe994379a311aceaea546/src/nanotron/logging/base.py#L268
         if abs(num) < 1:
             return "{:.3g}".format(num)
         SIZES = ["", "K", "M", "B", "T", "P", "E"]
         num = float("{:.3g}".format(num))
-        magnitude = 0
         i = 0
         while abs(num) >= 1000 and i < len(SIZES) - 1:
-            magnitude += 1
             num /= 1000.0 if not divide_by_1024 else 1024.0
             i += 1
-        return "{}{}".format("{:f}".format(num).rstrip("0").rstrip("."), SIZES[magnitude])
+        return "{}{}".format("{:f}".format(num).rstrip("0").rstrip("."), SIZES[i])
 
 
     def _pretty_print(self, metrics, step):
@@ -101,22 +98,24 @@ class MetricLogger:
         print(print_string)
 
 
+    def _log(self, metrics):
+        step = metrics.pop("step")
+        # move to cpu - to not block 
+        metrics = jax.tree_util.tree_map(lambda x: float(x), metrics)
+        metrics["tokens_consumed"] = self.tokens_consumed
+        metrics["tokens_per_second"] = self.tokens_per_batch / metrics["step_time"]
+        metrics["tokens_per_second_per_device"] = metrics["tokens_per_second"] / self.num_devices
+        metrics["mfu"] = ((self.num_flops_per_token * metrics["tokens_per_second"]) / self.xpu_peak_flops) * 100
+        self._pretty_print(metrics, step)
+        self.wandb_run.log(metrics, step=step)
+
     def log(self, metrics):
         self.prev_metrics, log_metrics = metrics, self.prev_metrics 
         self.tokens_consumed += self.tokens_per_batch
+        if log_metrics:
+            self._log(log_metrics)
 
-        if not log_metrics:
-            return
-
-        step = log_metrics.pop("step")
-
-        # move to cpu - to not block 
-        log_metrics = jax.tree_util.tree_map(lambda x: float(x), log_metrics)
-
-        log_metrics["tokens_consumed"] = self.tokens_consumed
-        log_metrics["tokens_per_second"] = self.tokens_per_batch / log_metrics["step_time"]
-        log_metrics["tokens_per_second_per_device"] = log_metrics["tokens_per_second"] / self.num_devices
-        log_metrics["mfu"] = ((self.num_flops_per_token * log_metrics["tokens_per_second"]) / self.xpu_peak_flops) * 100
-
-        self._pretty_print(log_metrics, step)
-        self.wandb_run.log(log_metrics, step=step)
+    def flush(self):
+        if self.prev_metrics:
+            self._log(self.prev_metrics)
+            self.prev_metrics = None
