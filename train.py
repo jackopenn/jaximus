@@ -3,11 +3,10 @@ import os
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 
 # XLA performance flags for TPU
-XLA_FLAGS = [
+os.environ["XLA_FLAGS"] = " ".join([
   "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=false",
   "--xla_enable_async_all_gather=true",
-]
-os.environ["XLA_FLAGS"] = " ".join(XLA_FLAGS)
+])
 
 from muon import muon
 
