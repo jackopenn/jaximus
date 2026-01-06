@@ -28,14 +28,26 @@ from parallel import logical_to_physical, set_sharding_strategy
 from utils import DummyWandb, get_num_params_and_flops, pretty_print_samples, MetricLogger
 
 
-def unsharded_muon(*args, **kwargs):
+def unsharded_muon(
+    learning_rate=0.02,
+    nesterov=True,
+    beta=0.95,
+    ns_coeffs=(3.4445, -4.7750, 2.0315),
+    ns_steps=6,
+):
     """Wrap Muon optimizer to replicate inputs before processing.
     
     Muon's Newton-Schulz orthogonalization does matrix ops (x @ x.T) that fail
     when tensors are sharded along the contracting dimension (FSDP case).
     This wrapper replicates gradients before Muon processes them.
     """
-    inner = optax.contrib.muon(*args, **kwargs)
+    inner = optax.contrib.muon(
+        learning_rate=learning_rate,
+        nesterov=nesterov,
+        beta=beta,
+        ns_coeffs=ns_coeffs,
+        ns_steps=ns_steps,
+    )
     
     def init_fn(params):
         replicated = jax.tree.map(
