@@ -111,11 +111,10 @@ class MetricLogger:
 
     def log(self, metrics):
         self.prev_metrics, log_metrics = metrics, self.prev_metrics 
-        self.tokens_consumed += self.tokens_per_batch
         if log_metrics:
             self._log(log_metrics)
+        self.tokens_consumed += self.tokens_per_batch
 
     def flush(self):
         if self.prev_metrics:
             self._log(self.prev_metrics)
-            self.prev_metrics = None
