@@ -54,7 +54,7 @@ def generate(
     tokenizer,
     prompts: list[str] = None,
     max_length: int = 64,
-    n_samples: int = 1,
+    n_samples: int = 5,
     top_k: int = 10,
     temperature: float = 1.0,
     seed: int = 0,

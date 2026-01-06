@@ -145,28 +145,39 @@ def train(cfg):
                 jnp.where(step < decay_start, peak_value, decay_value)
             )
         return schedule
-    learning_rate_schedule = partial(warmup_linear_decay_schedule,
-        init_value=0.0,
-        end_value=0.0,
-        warmup_steps= 0.0 * cfg.max_steps,
-        decay_steps= 0.2 * cfg.max_steps,
-        max_steps=cfg.max_steps,
-    )
+    
     adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
+    te_peak_value = 0.2 * ((cfg.model.hidden_dim / 768) ** -0.5)
+    lm_head_peak_value = 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
+    other_peak_value = 0.02
+    print(f"{te_peak_value=}")
+    print(f"{lm_head_peak_value=}")
+    print(f"{other_peak_value=}")
+    
+    # Schedule params shared between optimizer and logging
+    schedule_params = dict(
+        init_value=0.0, end_value=0.0,
+        warmup_steps=0.0 * cfg.max_steps, decay_steps=0.2 * cfg.max_steps, max_steps=cfg.max_steps,
+    )
+    
+    # JAX schedules for optimizer (also used for logging on CPU)
+    lr_schedule_te = warmup_linear_decay_schedule(peak_value=te_peak_value, **schedule_params)
+    lr_schedule_lm_head = warmup_linear_decay_schedule(peak_value=lm_head_peak_value, **schedule_params)
+    lr_schedule_other = warmup_linear_decay_schedule(peak_value=other_peak_value, **schedule_params)
     tx = optax.chain(
         optax.clip_by_global_norm(1.0),
         optax.partition(
             {
                 "token_embedding": optax.adamw(
-                    learning_rate=learning_rate_schedule(peak_value=0.2 * ((cfg.model.hidden_dim / 768) ** -0.5)),
+                    learning_rate=lr_schedule_te,
                     **adamw_params,
                 ),
                 "lm_head": optax.adamw(
-                    learning_rate=learning_rate_schedule(peak_value=0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)),
+                    learning_rate=lr_schedule_lm_head,
                     **adamw_params,
                 ),
                 "other": optax.contrib.muon(
-                    learning_rate=learning_rate_schedule(peak_value=0.02),
+                    learning_rate=lr_schedule_other,
                     nesterov=True,
                     beta=0.95,
                 ),
@@ -239,8 +250,20 @@ def train(cfg):
             t0 = time.time()
 
             # log metrics
-            if main_process :
-                train_logger.log({"loss": loss, "grad_norm": grad_norm, "step_time": step_time, "step": step})
+            if main_process:
+                with jax.default_device(jax.devices("cpu")[0]):
+                    lr_te = lr_schedule_te(step)
+                    lr_lm_head = lr_schedule_lm_head(step)
+                    lr_other = lr_schedule_other(step)
+                train_logger.log({
+                    "loss": loss,
+                    "grad_norm": grad_norm,
+                    "step_time": step_time,
+                    "step": step,
+                    "lr/token_embedding": lr_te,
+                    "lr/lm_head": lr_lm_head,
+                    "lr/other": lr_other,
+                })
 
             # generate samples
             if step % cfg.generate_every == 0:
