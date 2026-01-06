@@ -1,5 +1,7 @@
 import os
 
+from muon import muon
+
 # Must initialize distributed JAX BEFORE any other JAX imports
 # Check env var to determine if multihost mode is needed
 if os.environ.get("JAX_MULTIHOST", "0") == "1":
@@ -200,7 +202,7 @@ def train(cfg):
                     learning_rate=lr_schedule_lm_head,
                     **adamw_params,
                 ),
-                "other": optax.inject_hyperparams(optax.contrib.muon)(
+                "other": optax.inject_hyperparams(muon)(
                     learning_rate=lr_schedule_other,
                     nesterov=True,
                     beta=muon_momentum_schedule,
