@@ -164,6 +164,12 @@ def train(cfg):
     lr_schedule_te = warmup_linear_decay_schedule(peak_value=te_peak_value, **schedule_params)
     lr_schedule_lm_head = warmup_linear_decay_schedule(peak_value=lm_head_peak_value, **schedule_params)
     lr_schedule_other = warmup_linear_decay_schedule(peak_value=other_peak_value, **schedule_params)
+    
+    # Momentum schedule for Muon optimizer (0.85 -> 0.95 over first 300 steps)
+    def muon_momentum_schedule(step):
+        frac = jnp.minimum(step / 300, 1.0)
+        return (1 - frac) * 0.85 + frac * 0.95
+    
     tx = optax.chain(
         optax.clip_by_global_norm(1.0),
         optax.partition(
@@ -176,10 +182,10 @@ def train(cfg):
                     learning_rate=lr_schedule_lm_head,
                     **adamw_params,
                 ),
-                "other": optax.contrib.muon(
+                "other": optax.inject_hyperparams(optax.contrib.muon)(
                     learning_rate=lr_schedule_other,
                     nesterov=True,
-                    beta=0.95,
+                    beta=muon_momentum_schedule,
                 ),
             },
             lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
@@ -193,7 +199,6 @@ def train(cfg):
         num_params, num_flops_per_token = get_num_params_and_flops(model)
         print(f"{num_params=}")
         print(f"{num_flops_per_token=}")
-
 
         # init logging
         wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
@@ -251,15 +256,17 @@ def train(cfg):
 
             # log metrics
             if main_process:
-                with jax.default_device(jax.devices("cpu")[0]):
-                    lr_te = lr_schedule_te(step)
-                    lr_lm_head = lr_schedule_lm_head(step)
-                    lr_other = lr_schedule_other(step)
+                # with jax.default_device(jax.devices("cpu")[0]):
+                lr_te = lr_schedule_te(step)
+                lr_lm_head = lr_schedule_lm_head(step)
+                lr_other = lr_schedule_other(step)
+                muon_momentum = muon_momentum_schedule(step)
                 train_logger.log({
                     "loss": loss,
                     "grad_norm": grad_norm,
                     "step_time": step_time,
                     "step": step,
+                    "muon_momentum": muon_momentum,
                     "lr/token_embedding": lr_te,
                     "lr/lm_head": lr_lm_head,
                     "lr/other": lr_other,
