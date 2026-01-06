@@ -142,7 +142,7 @@ class Model(nnx.Module):
             num_embeddings=vocab_size,
             features=hidden_dim,
             dtype=dtype,
-            embedding_init=shard_init(inits["embed"], ("vocab", "embed")),
+            embedding_init=shard_init(inits["embed"], ("model_vocab", "model_embed")),
             rngs=rngs,
         )
         
@@ -161,7 +161,7 @@ class Model(nnx.Module):
                 num_embeddings=max_seq_len,
                 features=hidden_dim,
                 dtype=dtype,
-                embedding_init=shard_init(inits["embed"], ("seq", "embed")),
+                embedding_init=shard_init(inits["embed"], ("model_seq", "model_embed")),
                 rngs=rngs,
             )
         
@@ -205,8 +205,8 @@ class Model(nnx.Module):
                 in_features=hidden_dim,
                 out_features=vocab_size,
                 use_bias=lm_head_use_bias,
-                kernel_init=shard_init(inits["lm_head"], ("vocab", "embed")),
-                bias_init=shard_init(inits["bias"], ("vocab", )),
+                kernel_init=shard_init(inits["lm_head"], ("model_embed", "model_vocab")),
+                bias_init=shard_init(inits["bias"], ("model_vocab", )),
                 dtype=dtype,
                 rngs=rngs,
             )
@@ -221,10 +221,10 @@ class Model(nnx.Module):
         return self.pos_embedding(x)
 
     def __call__(self, x, mask=None):
-        x = self._token_embedding(x, out_sharding=logical_to_physical(("batch", "seq", "embed")))
+        x = self._token_embedding(x, out_sharding=logical_to_physical(("batch", "act_seq", "act_embed")))
 
         if self.position_embedding_type == "learned":
-            x = x + self._pos_embedding(jnp.arange(x.shape[1]), out_sharding=logical_to_physical(("seq", "embed")))
+            x = x + self._pos_embedding(jnp.arange(x.shape[1]), out_sharding=logical_to_physical(("act_seq", "act_embed")))
 
         if self.post_embed_norm:
             x = self.embed_norm(x)
@@ -235,7 +235,7 @@ class Model(nnx.Module):
         if self.pre_lm_head_norm:
             x = self.ln_f(x)
 
-        logits = self.lm_head(x, out_sharding=logical_to_physical(("batch", "seq", "vocab"))) if self.lm_head else self.token_embedding.attend(x)
+        logits = self.lm_head(x, out_sharding=logical_to_physical(("batch", "act_seq", "act_vocab"))) if self.lm_head else self.token_embedding.attend(x)
 
         if self.softcap:
             logits = self.softcap * jnp.tanh(logits.astype(jnp.float32) / self.softcap)

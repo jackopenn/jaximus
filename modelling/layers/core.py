@@ -43,7 +43,7 @@ class MLP(nnx.Module):
             intermediate_dim,
             use_bias=use_bias,
             dtype=dtype,
-            kernel_init=shard_init(inits["mlp_up"], ("embed", "intermediate")),
+            kernel_init=shard_init(inits["mlp_up"], ("model_embed", "model_intermediate")),
             bias_init=shard_init(inits["bias"], ("intermediate", )),
             rngs=rngs,
         )
@@ -52,16 +52,16 @@ class MLP(nnx.Module):
             hidden_dim,
             use_bias=use_bias,
             dtype=dtype,
-            kernel_init=shard_init(inits["mlp_down"], ("intermediate", "embed")),
-            bias_init=shard_init(inits["bias"], ("embed", )),
+            kernel_init=shard_init(inits["mlp_down"], ("model_intermediate", "model_embed")),
+            bias_init=shard_init(inits["bias"], ("model_embed", )),
             rngs=rngs,
         )
         self.act_fn = act_fn
 
     def __call__(self, x):
-        x = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "intermediate")))
+        x = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_intermediate")))
         x = self.act_fn(x)
-        x = self.down_proj(x, out_sharding=logical_to_physical(("batch", "seq", "embed")))
+        x = self.down_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_embed")))
         return x
     
 
@@ -82,8 +82,8 @@ class GLU(nnx.Module):
             intermediate_dim,
             use_bias=use_bias,
             dtype=dtype,
-            kernel_init=shard_init(inits["mlp_up"], ("embed", "intermediate")),
-            bias_init=shard_init(inits["bias"], ("intermediate", )),
+            kernel_init=shard_init(inits["mlp_up"], ("model_embed", "model_intermediate")),
+            bias_init=shard_init(inits["bias"], ("model_intermediate", )),
             rngs=rngs,
         )
         self.gate_proj = nnx.Linear(
@@ -91,8 +91,8 @@ class GLU(nnx.Module):
             intermediate_dim,
             use_bias=use_bias,
             dtype=dtype,
-            kernel_init=shard_init(inits["mlp_up"], ("intermediate", "intermediate")),
-            bias_init=shard_init(inits["bias"], ("intermediate", )),
+            kernel_init=shard_init(inits["mlp_up"], ("model_embed", "model_intermediate")),
+            bias_init=shard_init(inits["bias"], ("model_intermediate", )),
             rngs=rngs,
         )
         self.down_proj = nnx.Linear(
@@ -100,16 +100,16 @@ class GLU(nnx.Module):
             hidden_dim,
             use_bias=use_bias,
             dtype=dtype,
-            kernel_init=shard_init(inits["mlp_down"], ("intermediate", "embed")),
-            bias_init=shard_init(inits["bias"], ("embed", )),
+            kernel_init=shard_init(inits["mlp_down"], ("model_intermediate", "model_embed")),
+            bias_init=shard_init(inits["bias"], ("model_embed", )),
             rngs=rngs,
         )
         self.act_fn = act_fn
 
     def __call__(self, x):
-        up = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "intermediate")))
-        gate = self.gate_proj(x, out_sharding=logical_to_physical(("batch", "seq", "intermediate")))
-        out = self.down_proj(self.act_fn(gate) * up, out_sharding=logical_to_physical("batch", "seq", "embed"))
+        up = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_intermediate")))
+        gate = self.gate_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_intermediate")))
+        out = self.down_proj(self.act_fn(gate) * up, out_sharding=logical_to_physical("batch", "seq", "act_embed"))
         return out
 
 
@@ -139,41 +139,40 @@ class Attention(nnx.Module):
         self.dtype = dtype
         self.sliding_window = sliding_window
 
-        self.q_proj = nnx.LinearGeneral(
+        self.q_proj = nnx.Linear(
             hidden_dim,
-            (num_attention_heads, head_dim),
+            num_attention_heads * head_dim,
             use_bias=use_bias,
-            kernel_init=shard_init(inits["qkv"], ("embed", "q_heads", "head_dim")),
-            bias_init=shard_init(inits["bias"], ("heads", "head_dim")),
+            kernel_init=shard_init(inits["qkv"], ("model_embed", "model_q")),
+            bias_init=shard_init(inits["bias"], ("model_q",)),
             dtype=dtype,
             rngs=rngs,
         )
-        self.k_proj = nnx.LinearGeneral(
+        self.k_proj = nnx.Linear(
             hidden_dim,
-            (num_key_value_heads, head_dim),
+            num_key_value_heads * head_dim,
             use_bias=use_bias,
-            kernel_init=shard_init(inits["qkv"], ("embed", "kv_heads", "head_dim")),
-            bias_init=shard_init(inits["bias"], ("heads", "head_dim")),
+            kernel_init=shard_init(inits["qkv"], ("model_embed", "model_kv")),
+            bias_init=shard_init(inits["bias"], ("model_kv",)),
             dtype=dtype,
             rngs=rngs,
         )
-        self.v_proj = nnx.LinearGeneral(
+        self.v_proj = nnx.Linear(
             hidden_dim,
-            (num_key_value_heads, head_dim),
+            num_key_value_heads * head_dim,
             use_bias=use_bias,
-            kernel_init=shard_init(inits["qkv"], ("embed", "kv_heads", "head_dim")),
-            bias_init=shard_init(inits["bias"], ("heads", "head_dim")),
+            kernel_init=shard_init(inits["qkv"], ("model_embed", "model_kv")),
+            bias_init=shard_init(inits["bias"], ("model_kv",)),
             dtype=dtype,
             rngs=rngs,
         )
 
-        self.o_proj = nnx.LinearGeneral(
-            (num_attention_heads, head_dim),
+        self.o_proj = nnx.Linear(
+            num_attention_heads * head_dim,
             hidden_dim,
             use_bias=use_bias,
-            axis=(-2, -1),
-            kernel_init=shard_init(inits["o_proj"], ("heads", "head_dim", "embed")),
-            bias_init=shard_init(inits["bias"], ("embed", )),
+            kernel_init=shard_init(inits["o_proj"], ("model_q", "model_embed")),
+            bias_init=shard_init(inits["bias"], ("model_embed",)),
             dtype=dtype,
             rngs=rngs,
         )
@@ -199,10 +198,15 @@ class Attention(nnx.Module):
             )
 
     def __call__(self, x, mask=None):
-        q = self.q_proj(x, out_sharding=logical_to_physical(("batch", "seq", "q_heads", "head_dim")))
-        k = self.k_proj(x, out_sharding=logical_to_physical(("batch", "seq", "kv_heads", "head_dim")))
-        v = self.v_proj(x, out_sharding=logical_to_physical(("batch", "seq", "kv_heads", "head_dim")))
-
+        batch, seq, _ = x.shape
+        
+        q = self.q_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_q")))
+        k = self.k_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_kv")))
+        v = self.v_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_kv")))
+        
+        q = q.reshape(batch, seq, self.num_attention_heads, self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_q", "head_embed")))
+        k = k.reshape(batch, seq, self.num_key_value_heads, self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_kv", "head_embed")))
+        v = v.reshape(batch, seq, self.num_key_value_heads, self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_kv", "head_embed")))
      
         if self.rope_theta:
             positions = jnp.arange(x.shape[1])[None, :]
@@ -225,5 +229,6 @@ class Attention(nnx.Module):
             local_window_size=(self.sliding_window, 0) if self.sliding_window else None
         )
 
-        out = self.o_proj(att, out_sharding=logical_to_physical(("batch", "seq", "embed")))
+        att = att.reshape(batch, seq, self.num_attention_heads * self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_embed")))
+        out = self.o_proj(att, out_sharding=logical_to_physical(("batch", "seq", "act_embed")))
         return out
