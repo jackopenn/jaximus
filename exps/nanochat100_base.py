@@ -60,6 +60,8 @@ def get_config():
     cfg.model.init_strategy = "nanochat"
     cfg.model.softcap = 15.0
     cfg.model.dtype = "bfloat16"
+    cfg.model.post_embed_norm = True
+    cfg.model.pre_lm_head_norm = True
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
     cfg.data.tokenizer_name = "gpt2"

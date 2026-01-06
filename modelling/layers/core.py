@@ -203,14 +203,15 @@ class Attention(nnx.Module):
         k = self.k_proj(x, out_sharding=logical_to_physical(("batch", "seq", "kv_heads", "head_dim")))
         v = self.v_proj(x, out_sharding=logical_to_physical(("batch", "seq", "kv_heads", "head_dim")))
 
-        if self.qk_norm:
-            q = self.q_norm(q).astype(self.dtype)
-            k = self.k_norm(k).astype(self.dtype)
-
+     
         if self.rope_theta:
             positions = jnp.arange(x.shape[1])[None, :]
             q = apply_rope(q, positions, base_frequency=self.rope_theta)
             k = apply_rope(k, positions, base_frequency=self.rope_theta)
+
+        if self.qk_norm:
+            q = self.q_norm(q).astype(self.dtype)
+            k = self.k_norm(k).astype(self.dtype)
 
         if mask is not None:
             mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)

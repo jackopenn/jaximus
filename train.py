@@ -147,7 +147,7 @@ def train(cfg):
         return schedule
     
     adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
-    te_peak_value = 0.2 * ((cfg.model.hidden_dim / 768) ** -0.5)
+    te_peak_value = 0.3 * ((cfg.model.hidden_dim / 768) ** -0.5)
     lm_head_peak_value = 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
     other_peak_value = 0.02
     if main_process:
@@ -158,7 +158,7 @@ def train(cfg):
     # Schedule params shared between optimizer and logging
     schedule_params = dict(
         init_value=0.0, end_value=0.0,
-        warmup_steps=0.0 * cfg.max_steps, decay_steps=0.2 * cfg.max_steps, max_steps=cfg.max_steps,
+        warmup_steps=0.0 * cfg.max_steps, decay_steps=0.4 * cfg.max_steps, max_steps=cfg.max_steps,
     )
     
     # JAX schedules for optimizer

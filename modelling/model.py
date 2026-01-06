@@ -116,6 +116,8 @@ class Model(nnx.Module):
         init_strategy,
         softcap,
         dtype,
+        post_embed_norm,
+        pre_lm_head_norm,
         rngs,
     ):
         super().__init__()
@@ -124,6 +126,7 @@ class Model(nnx.Module):
         self.position_embedding_type = position_embedding_type
         self.tie_word_embeddings = tie_word_embeddings
         self.softcap = softcap
+        self.pre_lm_head_norm = pre_lm_head_norm
 
         # used to estimate model flops 
         self.num_layers = num_layers
@@ -142,6 +145,16 @@ class Model(nnx.Module):
             embedding_init=shard_init(inits["embed"], ("vocab", "embed")),
             rngs=rngs,
         )
+        
+        self.post_embed_norm = post_embed_norm
+        if post_embed_norm:
+            self.embed_norm = create_norm(
+                norm_type=norm_type,
+                num_features=hidden_dim,
+                epsilon=norm_epsilon,
+                use_bias=False,
+                rngs=rngs,
+            )
         
         if position_embedding_type == "learned":
             self.pos_embedding = nnx.Embed(
@@ -178,13 +191,14 @@ class Model(nnx.Module):
             for _ in range(num_layers)
         ])
         
-        self.ln_f = create_norm(
-            norm_type=norm_type,
-            num_features=hidden_dim,
-            epsilon=norm_epsilon,
-            use_bias=attn_use_bias,
-            rngs=rngs,
-        )
+        if pre_lm_head_norm:
+            self.ln_f = create_norm(
+                norm_type=norm_type,
+                num_features=hidden_dim,
+                epsilon=norm_epsilon,
+                use_bias=attn_use_bias,
+                rngs=rngs,
+            )
         
         if not tie_word_embeddings:
             self.lm_head = nnx.Linear(
@@ -212,9 +226,14 @@ class Model(nnx.Module):
         if self.position_embedding_type == "learned":
             x = x + self._pos_embedding(jnp.arange(x.shape[1]), out_sharding=logical_to_physical(("seq", "embed")))
 
+        if self.post_embed_norm:
+            x = self.embed_norm(x)
+
         for layer in self.layers:
             x = layer(x, mask)
-        x = self.ln_f(x)
+        
+        if self.pre_lm_head_norm:
+            x = self.ln_f(x)
 
         logits = self.lm_head(x, out_sharding=logical_to_physical(("batch", "seq", "vocab"))) if self.lm_head else self.token_embedding.attend(x)
 
