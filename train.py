@@ -51,9 +51,7 @@ def unsharded_muon(
     
     def _replicate(x):
         """Reshard tensor to be fully replicated across all devices."""
-        mesh = jax.get_mesh()
-        replicated_sharding = jax.sharding.NamedSharding(mesh, P())
-        return jax.sharding.reshard(x, replicated_sharding)
+        return jax.sharding.reshard(x, P())
     
     def init_fn(params):
         replicated = jax.tree.map(_replicate, params)
