@@ -9,14 +9,14 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 # #   "--xla_enable_async_all_gather=true",
 # ])
 
-os.environ['XLA_FLAGS'] = (
-    # '--xla_gpu_triton_gemm_any=True '
-    # '--xla_gpu_enable_latency_hiding_scheduler=true '
-    # '--xla_tpu_enable_data_parallel_all_reduce_opt=true '
-    # '--xla_tpu_enable_async_collective_fusion_fuse_all_gather=false '
-    # '--xla_enable_async_all_gather=true '
-    "--xla_tpu_megacore_fusion_allow_ags=true "
-)
+# os.environ['XLA_FLAGS'] = (
+#     # '--xla_gpu_triton_gemm_any=True '
+#     # '--xla_gpu_enable_latency_hiding_scheduler=true '
+#     # '--xla_tpu_enable_data_parallel_all_reduce_opt=true '
+#     # '--xla_tpu_enable_async_collective_fusion_fuse_all_gather=false '
+#     # '--xla_enable_async_all_gather=true '
+#     # "--xla_tpu_megacore_fusion_allow_ags=true "
+# )
 
 from muon import muon
 
