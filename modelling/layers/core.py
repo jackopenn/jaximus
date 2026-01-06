@@ -59,9 +59,12 @@ class MLP(nnx.Module):
         self.act_fn = act_fn
 
     def __call__(self, x):
-        x = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_intermediate")))
-        x = self.act_fn(x)
-        x = self.down_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_embed")))
+        with jax.profiler.TraceAnnotation("up_proj"):
+            x = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_intermediate")))
+        with jax.profiler.TraceAnnotation("act_fn"):
+            x = self.act_fn(x)
+        with jax.profiler.TraceAnnotation("down_proj"):
+            x = self.down_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_embed")))
         return x
     
 
@@ -107,9 +110,12 @@ class GLU(nnx.Module):
         self.act_fn = act_fn
 
     def __call__(self, x):
-        up = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_intermediate")))
-        gate = self.gate_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_intermediate")))
-        out = self.down_proj(self.act_fn(gate) * up, out_sharding=logical_to_physical("batch", "seq", "act_embed"))
+        with jax.profiler.TraceAnnotation("up_proj"):
+            up = self.up_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_intermediate")))
+        with jax.profiler.TraceAnnotation("gate_proj"):
+            gate = self.gate_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_intermediate")))
+        with jax.profiler.TraceAnnotation("down_proj"):
+            out = self.down_proj(self.act_fn(gate) * up, out_sharding=logical_to_physical("batch", "seq", "act_embed"))
         return out
 
 
@@ -199,36 +205,47 @@ class Attention(nnx.Module):
 
     def __call__(self, x, mask=None):
         batch, seq, _ = x.shape
-        
-        q = self.q_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_q")))
-        k = self.k_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_kv")))
-        v = self.v_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_kv")))
-        
-        q = q.reshape(batch, seq, self.num_attention_heads, self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_q", "head_embed")))
-        k = k.reshape(batch, seq, self.num_key_value_heads, self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_kv", "head_embed")))
-        v = v.reshape(batch, seq, self.num_key_value_heads, self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_kv", "head_embed")))
+        with jax.profiler.TraceAnnotation("q_proj"):
+            q = self.q_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_q")))
+        with jax.profiler.TraceAnnotation("k_proj"):
+            k = self.k_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_kv")))
+        with jax.profiler.TraceAnnotation("v_proj"):
+            v = self.v_proj(x, out_sharding=logical_to_physical(("batch", "seq", "act_kv")))
+
+        with jax.profiler.TraceAnnotation("q_reshape"):
+            q = q.reshape(batch, seq, self.num_attention_heads, self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_q", "head_embed")))
+        with jax.profiler.TraceAnnotation("k_reshape"):
+            k = k.reshape(batch, seq, self.num_key_value_heads, self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_kv", "head_embed")))
+        with jax.profiler.TraceAnnotation("v_reshape"):
+            v = v.reshape(batch, seq, self.num_key_value_heads, self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_kv", "head_embed")))
      
         if self.rope_theta:
-            positions = jnp.arange(x.shape[1])[None, :]
-            q = apply_rope(q, positions, base_frequency=self.rope_theta)
-            k = apply_rope(k, positions, base_frequency=self.rope_theta)
+            with jax.profiler.TraceAnnotation("apply_rope"):
+                positions = jnp.arange(x.shape[1])[None, :]
+                q = apply_rope(q, positions, base_frequency=self.rope_theta)
+                k = apply_rope(k, positions, base_frequency=self.rope_theta)
 
         if self.qk_norm:
-            q = self.q_norm(q).astype(self.dtype)
-            k = self.k_norm(k).astype(self.dtype)
+            with jax.profiler.TraceAnnotation("q_norm"):
+                q = self.q_norm(q).astype(self.dtype)
+            with jax.profiler.TraceAnnotation("k_norm"):
+                k = self.k_norm(k).astype(self.dtype)
 
         if mask is not None:
             mask = nnx.make_attention_mask(mask, mask).astype(jnp.bool_)
 
         # handles repeating kv for GQA
-        att = jax.nn.dot_product_attention(
-            query=q, key=k, value=v,
-            is_causal=True,
-            implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
-            mask=mask,
-            local_window_size=(self.sliding_window, 0) if self.sliding_window else None
-        )
+        with jax.profiler.TraceAnnotation("dot_product_attention"):
+            att = jax.nn.dot_product_attention(
+                query=q, key=k, value=v,
+                is_causal=True,
+                implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
+                mask=mask,
+                local_window_size=(self.sliding_window, 0) if self.sliding_window else None
+            )
 
-        att = att.reshape(batch, seq, self.num_attention_heads * self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_embed")))
-        out = self.o_proj(att, out_sharding=logical_to_physical(("batch", "seq", "act_embed")))
+        with jax.profiler.TraceAnnotation("o_reshape"):
+            att = att.reshape(batch, seq, self.num_attention_heads * self.head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_embed")))
+        with jax.profiler.TraceAnnotation("o_proj"):
+            out = self.o_proj(att, out_sharding=logical_to_physical(("batch", "seq", "act_embed")))
         return out
