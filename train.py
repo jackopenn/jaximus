@@ -28,6 +28,38 @@ from parallel import logical_to_physical, set_sharding_strategy
 from utils import DummyWandb, get_num_params_and_flops, pretty_print_samples, MetricLogger
 
 
+def unsharded_muon(*args, **kwargs):
+    """Wrap Muon optimizer to replicate inputs before processing.
+    
+    Muon's Newton-Schulz orthogonalization does matrix ops (x @ x.T) that fail
+    when tensors are sharded along the contracting dimension (FSDP case).
+    This wrapper replicates gradients before Muon processes them.
+    """
+    inner = optax.contrib.muon(*args, **kwargs)
+    
+    def init_fn(params):
+        replicated = jax.tree.map(
+            lambda x: jax.lax.with_sharding_constraint(x, jax.sharding.PartitionSpec()),
+            params
+        )
+        return inner.init(replicated)
+    
+    def update_fn(updates, state, params=None, **extra_args):
+        replicated_updates = jax.tree.map(
+            lambda x: jax.lax.with_sharding_constraint(x, jax.sharding.PartitionSpec()),
+            updates
+        )
+        replicated_params = None
+        if params is not None:
+            replicated_params = jax.tree.map(
+                lambda x: jax.lax.with_sharding_constraint(x, jax.sharding.PartitionSpec()),
+                params
+            )
+        return inner.update(replicated_updates, state, replicated_params, **extra_args)
+    
+    return optax.GradientTransformation(init_fn, update_fn)
+
+
 def validate_config(cfg):
     """Validate config consistency before model creation."""
     m = cfg.model
@@ -200,7 +232,7 @@ def train(cfg):
                     learning_rate=lr_schedule_lm_head,
                     **adamw_params,
                 ),
-                "other": optax.inject_hyperparams(optax.contrib.muon)(
+                "other": optax.inject_hyperparams(unsharded_muon)(
                     learning_rate=lr_schedule_other,
                     nesterov=True,
                     beta=muon_momentum_schedule,
