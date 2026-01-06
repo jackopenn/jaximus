@@ -256,20 +256,20 @@ def train(cfg):
 
             # log metrics
             if main_process:
-                # with jax.default_device(jax.devices("cpu")[0]):
-                lr_te = lr_schedule_te(step)
-                lr_lm_head = lr_schedule_lm_head(step)
-                lr_other = lr_schedule_other(step)
-                muon_momentum = muon_momentum_schedule(step)
+                # # with jax.default_device(jax.devices("cpu")[0]):
+                # lr_te = lr_schedule_te(step)
+                # lr_lm_head = lr_schedule_lm_head(step)
+                # lr_other = lr_schedule_other(step)
+                # muon_momentum = muon_momentum_schedule(step)
                 train_logger.log({
                     "loss": loss,
                     "grad_norm": grad_norm,
                     "step_time": step_time,
                     "step": step,
-                    "muon_momentum": muon_momentum,
-                    "lr/token_embedding": lr_te,
-                    "lr/lm_head": lr_lm_head,
-                    "lr/other": lr_other,
+                    # "muon_momentum": muon_momentum,
+                    # "lr/token_embedding": lr_te,
+                    # "lr/lm_head": lr_lm_head,
+                    # "lr/other": lr_other,
                 })
 
             # generate samples
