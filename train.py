@@ -49,24 +49,21 @@ def unsharded_muon(
         ns_steps=ns_steps,
     )
     
+    def _replicate(x):
+        """Reshard tensor to be fully replicated across all devices."""
+        mesh = jax.get_mesh()
+        replicated_sharding = jax.sharding.NamedSharding(mesh, P())
+        return jax.sharding.reshard(x, replicated_sharding)
+    
     def init_fn(params):
-        replicated = jax.tree.map(
-            lambda x: jax.lax.with_sharding_constraint(x, jax.sharding.PartitionSpec()),
-            params
-        )
+        replicated = jax.tree.map(_replicate, params)
         return inner.init(replicated)
     
     def update_fn(updates, state, params=None, **extra_args):
-        replicated_updates = jax.tree.map(
-            lambda x: jax.lax.with_sharding_constraint(x, jax.sharding.PartitionSpec()),
-            updates
-        )
+        replicated_updates = jax.tree.map(_replicate, updates)
         replicated_params = None
         if params is not None:
-            replicated_params = jax.tree.map(
-                lambda x: jax.lax.with_sharding_constraint(x, jax.sharding.PartitionSpec()),
-                params
-            )
+            replicated_params = jax.tree.map(_replicate, params)
         return inner.update(replicated_updates, state, replicated_params, **extra_args)
     
     return optax.GradientTransformation(init_fn, update_fn)
