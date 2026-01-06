@@ -150,9 +150,10 @@ def train(cfg):
     te_peak_value = 0.2 * ((cfg.model.hidden_dim / 768) ** -0.5)
     lm_head_peak_value = 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
     other_peak_value = 0.02
-    print(f"{te_peak_value=}")
-    print(f"{lm_head_peak_value=}")
-    print(f"{other_peak_value=}")
+    if main_process:
+        print(f"{te_peak_value=}")
+        print(f"{lm_head_peak_value=}")
+        print(f"{other_peak_value=}")
     
     # Schedule params shared between optimizer and logging
     schedule_params = dict(
@@ -160,7 +161,7 @@ def train(cfg):
         warmup_steps=0.0 * cfg.max_steps, decay_steps=0.2 * cfg.max_steps, max_steps=cfg.max_steps,
     )
     
-    # JAX schedules for optimizer (also used for logging on CPU)
+    # JAX schedules for optimizer
     lr_schedule_te = warmup_linear_decay_schedule(peak_value=te_peak_value, **schedule_params)
     lr_schedule_lm_head = warmup_linear_decay_schedule(peak_value=lm_head_peak_value, **schedule_params)
     lr_schedule_other = warmup_linear_decay_schedule(peak_value=other_peak_value, **schedule_params)
@@ -168,6 +169,23 @@ def train(cfg):
     # Momentum schedule for Muon optimizer (0.85 -> 0.95 over first 300 steps)
     def muon_momentum_schedule(step):
         frac = jnp.minimum(step / 300, 1.0)
+        return (1 - frac) * 0.85 + frac * 0.95
+    
+    # Pure Python schedules for logging (no JAX ops, avoids multihost issues)
+    warmup_steps = int(0.0 * cfg.max_steps)
+    decay_steps = int(0.2 * cfg.max_steps)
+    decay_start = cfg.max_steps - decay_steps
+    def get_lr_for_logging(step, peak_value):
+        if step < warmup_steps:
+            return (step / max(warmup_steps, 1)) * peak_value
+        elif step < decay_start:
+            return peak_value
+        else:
+            decay_pct = (step - decay_start) / max(decay_steps, 1)
+            return peak_value * (1 - decay_pct)
+    
+    def get_muon_momentum_for_logging(step):
+        frac = min(step / 300, 1.0)
         return (1 - frac) * 0.85 + frac * 0.95
     
     tx = optax.chain(
@@ -256,20 +274,15 @@ def train(cfg):
 
             # log metrics
             if main_process:
-                # # with jax.default_device(jax.devices("cpu")[0]):
-                # lr_te = lr_schedule_te(step)
-                # lr_lm_head = lr_schedule_lm_head(step)
-                # lr_other = lr_schedule_other(step)
-                # muon_momentum = muon_momentum_schedule(step)
                 train_logger.log({
                     "loss": loss,
                     "grad_norm": grad_norm,
                     "step_time": step_time,
                     "step": step,
-                    # "muon_momentum": muon_momentum,
-                    # "lr/token_embedding": lr_te,
-                    # "lr/lm_head": lr_lm_head,
-                    # "lr/other": lr_other,
+                    "muon_momentum": get_muon_momentum_for_logging(step),
+                    "lr/token_embedding": get_lr_for_logging(step, te_peak_value),
+                    "lr/lm_head": get_lr_for_logging(step, lm_head_peak_value),
+                    "lr/other": get_lr_for_logging(step, other_peak_value),
                 })
 
             # generate samples
