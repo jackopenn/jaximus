@@ -83,35 +83,35 @@ class Layer(nnx.Module):
             # x = x + self.mlp(self.ln_2(x))
             
             residual = x
-            with jax.profiler.TraceAnnotation("att_pre_norm"):
+            with jax.named_scope("att_pre_norm"):
                 x = self.ln_1(x)
-            with jax.profiler.TraceAnnotation("att"):
+            with jax.named_scope("att"):
                 x = self.attention(x, mask=mask)
-            with jax.profiler.TraceAnnotation("add_residual"):
+            with jax.named_scope("add_residual"):
                 x = x + residual
             
             residual = x
-            with jax.profiler.TraceAnnotation("mlp_pre_norm"):
+            with jax.named_scope("mlp_pre_norm"):
                 x = self.ln_2(x)
-            with jax.profiler.TraceAnnotation("mlp"):
+            with jax.named_scope("mlp"):
                 x = self.mlp(x)
-            with jax.profiler.TraceAnnotation("add_residual"):
+            with jax.named_scope("add_residual"):
                 x = x + residual
                 
         else:  # post-norm
             residual = x
-            with jax.profiler.TraceAnnotation("att"):
+            with jax.named_scope("att"):
                 x = self.attention(x, mask=mask)
-            with jax.profiler.TraceAnnotation("att_post_norm"):
+            with jax.named_scope("att_post_norm"):
                 x = self.ln_1(x)
-            with jax.profiler.TraceAnnotation("add_residual"):
+            with jax.named_scope("add_residual"):
                 x = x + residual
             residual = x
-            with jax.profiler.TraceAnnotation("mlp"):
+            with jax.named_scope("mlp"):
                 x = self.mlp(x)
-            with jax.profiler.TraceAnnotation("mlp_post_norm"):
+            with jax.named_scope("mlp_post_norm"):
                 x = self.ln_2(x)
-            with jax.profiler.TraceAnnotation("add_residual"):
+            with jax.named_scope("add_residual"):
                 x = x + residual
         return x
 
@@ -250,29 +250,29 @@ class Model(nnx.Module):
         return self.pos_embedding(x)
 
     def __call__(self, x, mask=None):
-        with jax.profiler.TraceAnnotation("token_embedding"):
+        with jax.named_scope("token_embedding"):
             x = self._token_embedding(x, out_sharding=logical_to_physical(("batch", "act_seq", "act_embed")))
 
         if self.position_embedding_type == "learned":
-            with jax.profiler.TraceAnnotation("pos_embedding"):
+            with jax.named_scope("pos_embedding"):
                 x = x + self._pos_embedding(jnp.arange(x.shape[1]), out_sharding=logical_to_physical(("act_seq", "act_embed")))
 
         if self.post_embed_norm:
-            with jax.profiler.TraceAnnotation("embed_norm"):
+            with jax.named_scope("embed_norm"):
                 x = self.embed_norm(x)
 
         for idx, layer in enumerate(self.layers):
-            with jax.profiler.TraceAnnotation(f"layer_{idx}"):
+            with jax.named_scope(f"layer_{idx}"):
                 x = layer(x, mask)
         
         if self.pre_lm_head_norm:
-            with jax.profiler.TraceAnnotation("ln_f"):
+            with jax.named_scope("ln_f"):
                 x = self.ln_f(x)
-        with jax.profiler.TraceAnnotation("lm_head"):
+        with jax.named_scope("lm_head"):
             logits = self.lm_head(x, out_sharding=logical_to_physical(("batch", "act_seq", "act_vocab"))) if self.lm_head else self.token_embedding.attend(x)
 
         if self.softcap:
-            with jax.profiler.TraceAnnotation("softcap"):
+            with jax.named_scope("softcap"):
                 logits = self.softcap * jnp.tanh(logits.astype(jnp.float32) / self.softcap)
             
         return logits
