@@ -54,7 +54,7 @@ def generate(
     tokenizer,
     prompts: list[str] = None,
     max_length: int = 64,
-    n_samples: int = 5,
+    n_samples: int = 1,
     top_k: int = 10,
     temperature: float = 1.0,
     seed: int = 0,
@@ -113,10 +113,12 @@ def generate(
     local_batch_size = global_batch_size // jax.process_count()
     
     # Build full token array (all processes build the same thing, then slice)
+    # Left-pad prompts so they all end at max_prompt_len, then add space for generation
     all_tokens = []
     for prompt_ids in prompt_token_lists:
-        # Pad prompt to max_prompt_len, then pad rest with pad tokens
-        padded = prompt_ids + [pad_id] * (max_length - len(prompt_ids))
+        left_pad = [pad_id] * (max_prompt_len - len(prompt_ids))
+        gen_space = [pad_id] * gen_len
+        padded = left_pad + prompt_ids + gen_space
         for _ in range(n_samples):
             all_tokens.append(padded)
     
@@ -132,11 +134,16 @@ def generate(
     start_idx = process_idx * local_batch_size
     end_idx = start_idx + local_batch_size
     local_tokens = all_tokens[start_idx:end_idx]
+    local_indices = np.arange(start_idx, end_idx, dtype=np.int32)
     
-    # Create sharded JAX array from local numpy data
+    # Create sharded JAX arrays from local numpy data
     tokens = jax.make_array_from_process_local_data(
         logical_to_physical(("batch", "seq")),
         local_tokens
+    )
+    indices = jax.make_array_from_process_local_data(
+        logical_to_physical(("batch",)),
+        local_indices
     )
     
     # Generate with cached model
@@ -144,14 +151,18 @@ def generate(
     sample_fn = nnx.cached_partial(_sample_batch, model)
     generated = sample_fn(tokens, max_prompt_len, gen_len, top_k, temperature, key)
     
-    # Gather from all hosts (for sharded array, returns fully replicated)
+    # Gather from all hosts
     all_generated = jax.experimental.multihost_utils.process_allgather(generated, tiled=True)
+    all_indices = jax.experimental.multihost_utils.process_allgather(indices, tiled=True)
     
     if not main_process:
         return None
     
-    # Slice off padding and decode on main process only
-    decoded = tokenizer.batch_decode(all_generated[:real_batch_size], skip_special_tokens=False)
+    # Reorder by original global indices and slice off padding
+    sort_order = np.argsort(all_indices)
+    all_generated = all_generated[sort_order][:real_batch_size]
+    
+    decoded = tokenizer.batch_decode(all_generated, skip_special_tokens=False)
     
     # Organize into dict: prompt -> [samples]
     results = {}

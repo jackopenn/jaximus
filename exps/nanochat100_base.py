@@ -78,7 +78,6 @@ def get_config():
     cfg.xpu = "v4"
     cfg.wandb = False
 
-    cfg.parallel.multihost = True
     cfg.parallel.strategy = "dp"
     cfg.parallel.data = 16
 
