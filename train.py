@@ -4,7 +4,8 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 
 # XLA performance flags for TPU
 os.environ["XLA_FLAGS"] = " ".join([
-  "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=false",
+    "xla_tpu_enable_data_parallel_all_reduce_opt=true",
+#   "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=false",
 #   "--xla_enable_async_all_gather=true",
 ])
 
