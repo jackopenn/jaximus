@@ -76,7 +76,7 @@ def get_config():
     cfg.generate_every = 500
     cfg.eval_every = -1
     cfg.checkpoint_every = 5000
-    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat100-base"
+    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat100-base-new"
     cfg.xpu = "v4"
     cfg.wandb = False
 

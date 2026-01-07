@@ -212,29 +212,28 @@ def train(cfg):
         frac = min(step / 300, 1.0)
         return (1 - frac) * 0.85 + frac * 0.95
     
-    # tx = optax.chain(
-    #     optax.clip_by_global_norm(1.0),
-    #     optax.partition(
-    #         {
-    #             "token_embedding": optax.adamw(
-    #                 learning_rate=lr_schedule_te,
-    #                 **adamw_params,
-    #             ),
-    #             "lm_head": optax.adamw(
-    #                 learning_rate=lr_schedule_lm_head,
-    #                 **adamw_params,
-    #             ),
-    #             "other": optax.inject_hyperparams(muon)(
-    #                 learning_rate=lr_schedule_other,
-    #                 nesterov=True,
-    #                 beta=muon_momentum_schedule,
-    #             ),
-    #         },
-    #         lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
-    #     )
-    # )
-    # tx = optax.MultiSteps(tx, every_k_schedule=cfg.optim.accum_steps)
-    tx = optax.adamw(learning_rate=lr_schedule_other, **adamw_params)
+    tx = optax.chain(
+        optax.clip_by_global_norm(1.0),
+        optax.partition(
+            {
+                "token_embedding": optax.adamw(
+                    learning_rate=lr_schedule_te,
+                    **adamw_params,
+                ),
+                "lm_head": optax.adamw(
+                    learning_rate=lr_schedule_lm_head,
+                    **adamw_params,
+                ),
+                "other": optax.inject_hyperparams(muon)(
+                    learning_rate=lr_schedule_other,
+                    nesterov=True,
+                    beta=muon_momentum_schedule,
+                ),
+            },
+            lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
+        )
+    )
+    tx = optax.MultiSteps(tx, every_k_schedule=cfg.optim.accum_steps)
     optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
 
     if main_process:
