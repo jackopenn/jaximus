@@ -220,13 +220,10 @@ def train(cfg):
                     learning_rate=lr_schedule_lm_head,
                     **adamw_params,
                 ),
-                # "other": optax.inject_hyperparams(muon)(
-                #     learning_rate=lr_schedule_other,
-                #     nesterov=True,
-                #     beta=muon_momentum_schedule,
-                "other": optax.adamw(
+                "other": optax.inject_hyperparams(muon)(
                     learning_rate=lr_schedule_other,
-                    **adamw_params,
+                    nesterov=True,
+                    beta=muon_momentum_schedule,
                 ),
             },
             lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
