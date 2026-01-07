@@ -35,7 +35,7 @@ def get_config():
     cfg.exp_name = "nanochat100-base"
 
     cfg.model.vocab_size = 50304
-    cfg.model.num_layers = 2
+    cfg.model.num_layers = 1
     cfg.model.hidden_dim = lambda: cfg.model.num_layers * 64
     cfg.model.num_attention_heads = lambda: max(1, (cfg.model.hidden_dim + 127) // 128)
     cfg.model.num_key_value_heads = lambda: cfg.model.num_attention_heads
@@ -50,18 +50,18 @@ def get_config():
     cfg.model.attn_use_bias = False
     cfg.model.mlp_use_bias = False
     cfg.model.lm_head_use_bias = False
-    cfg.model.qk_norm = True
-    cfg.model.qk_norm_type = "rms"
+    cfg.model.qk_norm = False
+    cfg.model.qk_norm_type = None
     cfg.model.qk_norm_epsilon = 1e-6
     cfg.model.sliding_window = None
-    cfg.model.position_embedding_type = "rope"
-    cfg.model.rope_theta = 10000.0
+    cfg.model.position_embedding_type = None
+    cfg.model.rope_theta = None
     cfg.model.tie_word_embeddings = False
     cfg.model.init_strategy = "nanochat"
-    cfg.model.softcap = 15.0
+    cfg.model.softcap = None
     cfg.model.dtype = "bfloat16"
-    cfg.model.post_embed_norm = True
-    cfg.model.pre_lm_head_norm = True
+    cfg.model.post_embed_norm = False
+    cfg.model.pre_lm_head_norm = False
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
     cfg.data.tokenizer_name = "gpt2"
