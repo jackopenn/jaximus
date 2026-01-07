@@ -113,7 +113,7 @@ def train(cfg):
             jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
         with jax.profiler.StepTraceAnnotation("train", step_num=micro_step):
             loss = cached_train_step(batch)
-        if main_process and micro_step == 20:
+        if main_process and micro_step == 30:
             jax.profiler.stop_trace()
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")
             print("done profiling")
