@@ -78,9 +78,9 @@ def get_config():
     cfg.checkpoint_every = 5000
     cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat100-base"
     cfg.xpu = "v4"
-    cfg.wandb = False
+    cfg.wandb = True
 
-    cfg.parallel.strategy = "dp"
+    cfg.parallel.strategy = "fsdp"
     cfg.parallel.data = 16
 
 
