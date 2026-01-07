@@ -100,8 +100,8 @@ def train(cfg):
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
     
     batch = (
-        jax.random.randint(0, (cfg.data.batch_size, cfg.data.max_length), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq"))),
-        jax.random.randint(1, (cfg.data.batch_size, cfg.data.max_length), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
+        jax.random.randint(0, (cfg.data.batch_size, cfg.data.max_length), minval=0, maxval=cfg.model.vocab_size, dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq"))),
+        jax.random.randint(1, (cfg.data.batch_size, cfg.data.max_length), minval=0, maxval=cfg.model.vocab_size, dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
     )
     micro_step = 0
     while True:
