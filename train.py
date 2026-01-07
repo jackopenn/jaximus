@@ -213,7 +213,7 @@ def train(cfg):
         return (1 - frac) * 0.85 + frac * 0.95
     
     tx = optax.chain(
-        optax.clip_by_global_norm(1.0),
+        # optax.clip_by_global_norm(1.0),
         optax.partition(
             {
                 "token_embedding": optax.adamw(
