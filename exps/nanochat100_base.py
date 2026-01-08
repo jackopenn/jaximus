@@ -1,32 +1,41 @@
-
 from functools import partial
 import jax
 from jax import numpy as jnp
 import optax
 from sws import Config
+from muon import muon
 
-# def warmup_linear_decay_schedule(
-#     init_value,
-#     peak_value,
-#     end_value,
-#     warmup_steps,
-#     decay_steps,
-#     max_steps
-# ):
-#     def schedule(step):
-#         warmup_pct = step / jnp.maximum(warmup_steps, 1)
-#         warmup_value = init_value + (peak_value - init_value) * warmup_pct
+
+def warmup_linear_decay_schedule(
+    init_value,
+    peak_value,
+    end_value,
+    warmup_steps,
+    decay_steps,
+    max_steps
+):
+    def schedule(step):
+        warmup_pct = step / jnp.maximum(warmup_steps, 1)
+        warmup_value = init_value + (peak_value - init_value) * warmup_pct
         
-#         decay_start = max_steps - decay_steps
-#         decay_pct = (step - decay_start) / jnp.maximum(decay_steps, 1)
-#         decay_value = peak_value + (end_value - peak_value) * decay_pct
+        decay_start = max_steps - decay_steps
+        decay_pct = (step - decay_start) / jnp.maximum(decay_steps, 1)
+        decay_value = peak_value + (end_value - peak_value) * decay_pct
         
-#         return jnp.where(
-#             step < warmup_steps,
-#             warmup_value,
-#             jnp.where(step < decay_start, peak_value, decay_value)
-#         )
-#     return schedule
+        return jnp.where(
+            step < warmup_steps,
+            warmup_value,
+            jnp.where(step < decay_start, peak_value, decay_value)
+        )
+    return schedule
+
+
+def make_muon_momentum_schedule(start, end, warmup_steps):
+    """Factory for momentum schedule for Muon optimizer"""
+    def schedule(step):
+        frac = jnp.minimum(step / warmup_steps, 1.0)
+        return (1 - frac) * start + frac * end
+    return schedule
 
 
 def get_config():
@@ -71,48 +80,68 @@ def get_config():
     cfg.data.batch_size = 32
     cfg.optim.accum_steps = 8
 
-    max_steps = 25_000
+    max_steps = 3.8e9 // 52488
     cfg.max_steps = max_steps
     cfg.generate_every = 500
     cfg.eval_every = -1
     cfg.checkpoint_every = 5000
-    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat100-base-new"
+    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat100-base-v2"
     cfg.xpu = "v4"
     cfg.wandb = False
 
-    cfg.parallel.strategy = "dp"
+    cfg.parallel.strategy = "fsdp"
     cfg.parallel.data = 16
 
-
     # ---------- optimizer config ----------
-    # learning_rate_schedule = partial(warmup_linear_decay_schedule,
-    #     init_value=0.0,
-    #     end_value=0.0,
-    #     warmup_steps= 0.0 * max_steps,
-    #     decay_steps= 0.2 * max_steps,
-    #     max_steps=max_steps,
-    # )
-    # adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
-    # cfg.optim.tx = lambda: optax.chain(
-    #     optax.clip_by_global_norm(1.0),
-    #     optax.partition(
-    #         {
-    #             "token_embedding": optax.adamw(
-    #                 learning_rate=learning_rate_schedule(peak_value=0.2 * ((cfg.model.hidden_dim / 768) ** -0.5)),
-    #                 **adamw_params,
-    #             ),
-    #             "lm_head": optax.adamw(
-    #                 learning_rate=learning_rate_schedule(peak_value=0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)),
-    #                 **adamw_params,
-    #             ),
-    #             "other": optax.contrib.muon(
-    #                 learning_rate=learning_rate_schedule(peak_value=0.02),
-    #                 nesterov=True,
-    #                 beta=0.95,
-    #             ),
-    #         },
-    #         lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
-    #     )
-    # )
+    adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
+    
+    cfg.optim.warmup_pct = 0.0
+    cfg.optim.decay_pct = 0.4
+    
+    schedule_params = dict(
+        init_value=0.0,
+        end_value=0.0,
+        warmup_steps=cfg.optim.warmup_pct * max_steps,
+        decay_steps=cfg.optim.decay_pct * max_steps,
+        max_steps=max_steps,
+    )
+    
+    cfg.optim.te_peak_value = lambda: 0.3 * ((cfg.model.hidden_dim / 768) ** -0.5)
+    cfg.optim.lm_head_peak_value = lambda: 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
+    cfg.optim.other_peak_value = 0.02
+    
+    cfg.optim.muon_momentum_start = 0.85
+    cfg.optim.muon_momentum_end = 0.95
+    cfg.optim.muon_momentum_warmup_steps = 300
+    
+    lr_schedule_te = warmup_linear_decay_schedule(peak_value=cfg.optim.te_peak_value, **schedule_params)
+    lr_schedule_lm_head = warmup_linear_decay_schedule(peak_value=cfg.optim.lm_head_peak_value, **schedule_params)
+    lr_schedule_other = warmup_linear_decay_schedule(peak_value=cfg.optim.other_peak_value, **schedule_params)
+    
+    cfg.optim.tx = optax.chain(
+        # optax.clip_by_global_norm(1.0),
+        optax.partition(
+            {
+                "token_embedding": optax.adamw(
+                    learning_rate=lr_schedule_te,
+                    **adamw_params,
+                ),
+                "lm_head": optax.adamw(
+                    learning_rate=lr_schedule_lm_head,
+                    **adamw_params,
+                ),
+                "other": optax.inject_hyperparams(muon)(
+                    learning_rate=lr_schedule_other,
+                    nesterov=True,
+                    beta=make_muon_momentum_schedule(
+                        cfg.optim.muon_momentum_start,
+                        cfg.optim.muon_momentum_end,
+                        cfg.optim.muon_momentum_warmup_steps,
+                    ),
+                ),
+            },
+            lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
+        )
+    )
 
     return cfg

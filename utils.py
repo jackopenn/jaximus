@@ -66,7 +66,7 @@ class DummyWandb:
         pass
 
 class MetricLogger:
-    def __init__(self, batch_size, accum_steps, sequence_length, num_flops_per_token, xpu_name, wandb_run):
+    def __init__(self, batch_size, accum_steps, sequence_length, num_flops_per_token, xpu_name, max_steps, wandb_run):
         self.num_flops_per_token = float(num_flops_per_token)
         self.wandb_run = wandb_run
         self.tokens_per_batch = batch_size * accum_steps * sequence_length
@@ -74,6 +74,7 @@ class MetricLogger:
         self.xpu_peak_flops = get_xpu_peak_flops(xpu_name) * self.num_devices
         self.prev_metrics = None
         self.tokens_consumed = 0
+        self.max_steps = max_steps
 
 
     def _human_format(self, num: float, divide_by_1024: bool = False) -> str:
@@ -91,7 +92,7 @@ class MetricLogger:
 
     def _pretty_print(self, metrics, step):
         
-        print_string = f"step: {step}, loss: {self._human_format(metrics['loss'])}"
+        print_string = f"step: {step}/{self.max_steps} ({step/self.max_steps*100:.2f}%), loss: {self._human_format(metrics['loss'])}"
         for k, v in metrics.items():
             if k != "loss":
                 print_string += f", {k}: {self._human_format(v)}"
