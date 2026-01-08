@@ -91,7 +91,6 @@ class MetricLogger:
 
 
     def _pretty_print(self, metrics, step):
-        
         print_string = f"step: {step}/{self.max_steps} ({step/self.max_steps*100:.2f}%), loss: {self._human_format(metrics['loss'])}"
         for k, v in metrics.items():
             if k != "loss":
