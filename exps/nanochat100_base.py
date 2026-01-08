@@ -94,15 +94,17 @@ def get_config():
 
     # ---------- optimizer config ----------
     adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
-    
-    cfg.optim.warmup_pct = 0.0
-    cfg.optim.decay_pct = 0.4
+
+    warmup_pct = 0.0
+    decay_pct = 0.4
+    cfg.optim.warmup_pct = warmup_pct
+    cfg.optim.decay_pct = decay_pct
     
     schedule_params = dict(
         init_value=0.0,
         end_value=0.0,
-        warmup_steps=cfg.optim.warmup_pct * max_steps,
-        decay_steps=cfg.optim.decay_pct * max_steps,
+        warmup_steps=warmup_pct * max_steps,
+        decay_steps=decay_pct * max_steps,
         max_steps=max_steps,
     )
     
