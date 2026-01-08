@@ -270,6 +270,7 @@ def train_step(model_weights, optimizer_state, x, y, cos, sin):
     return model_weights, optimizer_state, loss
 
 wandb.init(project="functional-transformer", config=c.to_dict())
+
 # init profiler
 os.makedirs("profiles", exist_ok=True)
 profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -278,6 +279,7 @@ profiler_options.host_tracer_level = 3
 
 x = jnp.ones((16, c.model.seq_len), dtype=jnp.int32)
 y = jnp.ones((16, c.model.seq_len), dtype=jnp.int32)
+
 cos, sin = precompute_rope_embeddings(c.model.seq_len, c.model.head_dim, c.model.rope_base)
 step = 0
 while True:
