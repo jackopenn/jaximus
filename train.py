@@ -18,6 +18,8 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 #     # "--xla_tpu_megacore_fusion_allow_ags=true "
 # )
 
+from muon import muon
+
 # Must initialize distributed JAX BEFORE any other JAX imports
 # Check env var to determine if multihost mode is needed
 if os.environ.get("JAX_MULTIHOST", "0") == "1":
@@ -150,6 +152,24 @@ def train(cfg):
         print(f"lm_head_peak_value={cfg.optim.lm_head_peak_value}")
         print(f"other_peak_value={cfg.optim.other_peak_value}")
     
+    # LR schedule (JAX)
+    def warmup_linear_decay_schedule(init_value, peak_value, end_value, warmup_steps, decay_steps, max_steps):
+        def schedule(step):
+            warmup_pct = step / jnp.maximum(warmup_steps, 1)
+            warmup_value = init_value + (peak_value - init_value) * warmup_pct
+            decay_start = max_steps - decay_steps
+            decay_pct = (step - decay_start) / jnp.maximum(decay_steps, 1)
+            decay_value = peak_value + (end_value - peak_value) * decay_pct
+            return jnp.where(step < warmup_steps, warmup_value, jnp.where(step < decay_start, peak_value, decay_value))
+        return schedule
+    
+    # Muon momentum schedule (JAX)
+    def make_muon_momentum_schedule(start, end, warmup_steps):
+        def schedule(step):
+            frac = jnp.minimum(step / warmup_steps, 1.0)
+            return (1 - frac) * start + frac * end
+        return schedule
+    
     # Pure Python schedules for logging (no JAX ops, avoids multihost issues)
     warmup_steps = int(cfg.optim.warmup_pct * cfg.max_steps)
     decay_steps = int(cfg.optim.decay_pct * cfg.max_steps)
@@ -168,7 +188,37 @@ def train(cfg):
         frac = min(step / cfg.optim.muon_momentum_warmup_steps, 1.0)
         return (1 - frac) * cfg.optim.muon_momentum_start + frac * cfg.optim.muon_momentum_end
     
-    tx = optax.MultiSteps(cfg.optim.tx, every_k_schedule=cfg.optim.accum_steps)
+    # Build optimizer
+    adamw_params = dict(weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95)
+    schedule_params = dict(
+        init_value=0.0, end_value=0.0,
+        warmup_steps=cfg.optim.warmup_pct * cfg.max_steps,
+        decay_steps=cfg.optim.decay_pct * cfg.max_steps,
+        max_steps=cfg.max_steps,
+    )
+    lr_schedule_te = warmup_linear_decay_schedule(peak_value=cfg.optim.te_peak_value, **schedule_params)
+    lr_schedule_lm_head = warmup_linear_decay_schedule(peak_value=cfg.optim.lm_head_peak_value, **schedule_params)
+    lr_schedule_other = warmup_linear_decay_schedule(peak_value=cfg.optim.other_peak_value, **schedule_params)
+    
+    tx = optax.chain(
+        optax.partition(
+            {
+                "token_embedding": optax.adamw(learning_rate=lr_schedule_te, **adamw_params),
+                "lm_head": optax.adamw(learning_rate=lr_schedule_lm_head, **adamw_params),
+                "other": optax.inject_hyperparams(muon)(
+                    learning_rate=lr_schedule_other,
+                    nesterov=True,
+                    beta=make_muon_momentum_schedule(
+                        cfg.optim.muon_momentum_start,
+                        cfg.optim.muon_momentum_end,
+                        cfg.optim.muon_momentum_warmup_steps,
+                    ),
+                ),
+            },
+            lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
+        )
+    )
+    tx = optax.MultiSteps(tx, every_k_schedule=cfg.optim.accum_steps)
     optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
 
     if main_process:
