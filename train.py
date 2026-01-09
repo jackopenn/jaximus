@@ -114,7 +114,7 @@ def train_step(model, optimizer, batch):
         optimizer.update(model, grads)
     with jax.named_scope("grad_norm"):
         grad_norm = optax.global_norm(grads)
-    print(loss)
+    print(loss, jax.typeof(loss))
     return loss, grad_norm
 
 
