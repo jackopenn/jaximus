@@ -31,7 +31,7 @@ def _newton_schulz_iteration(x: jax.Array, coeffs: jax.Array) -> jax.Array:
     b = coeffs[1] * a + coeffs[2] * a @ a
     return coeffs[0] * x + b @ x
 
-
+@auto_axes
 def orthogonalize(x: jax.Array, ns_coeffs: jax.Array, ns_steps: int = 5, eps: float = 1e-8) -> jax.Array:
     """Orthogonalize a 2D matrix via Newton-Schulz iteration.
     
@@ -115,7 +115,7 @@ def scale_by_muon(
         
         # Apply Newton-Schulz orthogonalization to each 2D matrix
         orthogonalized = jax.tree.map(
-            lambda x: orthogonalize(x, state.ns_coeffs, ns_steps, eps),
+            lambda x: orthogonalize(x, state.ns_coeffs, ns_steps, eps, out_sharding=jax.typeof(x).sharding),
             mu_hat
         )
         
