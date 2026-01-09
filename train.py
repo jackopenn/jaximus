@@ -345,13 +345,13 @@ def train(cfg):
                 })
 
             # generate samples
-            if step % cfg.generate_every == 0:
+            if cfg.generate_every > 0 and step % cfg.generate_every == 0:
                 samples = generate(model, tokenizer)
                 if main_process:
                     pretty_print_samples(samples)
 
             # checkpoint
-            if step % cfg.checkpoint_every == 0:
+            if cfg.checkpoint_every > 0 and step % cfg.checkpoint_every == 0:
                 checkpoint_manager.save(step, args=ocp.args.StandardSave(nnx.state(model)))
                 checkpoint_manager.wait_until_finished() # must wait before logging to wandb
                 if main_process:
@@ -360,7 +360,7 @@ def train(cfg):
             step += 1
     
     # final checkpoint (skip if last step was already checkpointed)
-    if cfg.max_steps % cfg.checkpoint_every != 0:
+    if cfg.checkpoint_every > 0 and cfg.max_steps % cfg.checkpoint_every != 0:
         checkpoint_manager.save(cfg.max_steps, args=ocp.args.StandardSave(nnx.state(model)))
         checkpoint_manager.wait_until_finished() # must wait before logging to wandb
         if main_process:
