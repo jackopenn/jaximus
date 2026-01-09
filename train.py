@@ -274,19 +274,6 @@ def train(cfg):
         grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
         optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
     
-    # Print sharding info for first layer
-    if main_process:
-        first_layer = model.layers[0]
-        print("\n=== Sharding Info ===")
-        print("Model (first layer attention q_proj kernel):", first_layer.attention.q_proj.kernel.value.sharding)
-        # Get optimizer state shardings via tree_map
-        opt_shardings = jax.tree.map(lambda x: x.sharding if hasattr(x, 'sharding') else None, optimizer.opt_state)
-        print("Optimizer state structure shardings (first few):")
-        flat_opt, _ = jax.tree_util.tree_flatten(opt_shardings)
-        for i, s in enumerate(flat_opt[:5]):
-            print(f"  [{i}]: {s}")
-        print("Grads sharding (first layer attention q_proj kernel):", grads_sharding['layers'][0]['attention']['q_proj']['kernel'])
-        print("=====================\n")
                 
     if main_process:
         # print model stats
@@ -306,6 +293,21 @@ def train(cfg):
             wandb_run=wandb_run,
         )
 
+    # Print sharding info for first layer
+    if main_process:
+        first_layer = model.layers[0]
+        print("\n=== Sharding Info ===")
+        print("Model (first layer attention q_proj kernel):", first_layer.attention.q_proj.kernel.value.sharding)
+        # Get optimizer state shardings via tree_map
+        opt_shardings = jax.tree.map(lambda x: x.sharding if hasattr(x, 'sharding') else None, optimizer.opt_state)
+        print("Optimizer state structure shardings (first few):")
+        flat_opt, _ = jax.tree_util.tree_flatten(opt_shardings)
+        for i, s in enumerate(flat_opt[:5]):
+            print(f"  [{i}]: {s}")
+        print("Grads sharding (first layer attention q_proj kernel):", grads_sharding['layers'][0]['attention']['q_proj']['kernel'])
+        print("=====================\n")
+        
+        
         # init profiler
         os.makedirs("profiles", exist_ok=True)
         profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -330,9 +332,11 @@ def train(cfg):
     step = 1
     micro_step = 0
     t0 = time.time()
+    batch = next(train_iter)
+    batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(logical_to_physical(("batch", "seq")), x), batch)
     while step <= cfg.max_steps:
-        batch = next(train_iter)
-        batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(logical_to_physical(("batch", "seq")), x), batch)
+        # batch = next(train_iter)
+        # batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(logical_to_physical(("batch", "seq")), x), batch)
 
         # train step (profile steps 10-20)
         if main_process and micro_step == 10: 
