@@ -7,7 +7,7 @@ def get_config():
     cfg.exp_name = "nanochat100-base"
 
     cfg.model.vocab_size = 50304
-    cfg.model.num_layers = 20
+    cfg.model.num_layers = 28
     cfg.model.hidden_dim = lambda: cfg.model.num_layers * 64
     cfg.model.num_attention_heads = lambda: max(1, (cfg.model.hidden_dim + 127) // 128)
     cfg.model.num_key_value_heads = lambda: cfg.model.num_attention_heads
@@ -43,7 +43,7 @@ def get_config():
     cfg.data.batch_size = 32
     cfg.optim.accum_steps = 8
 
-    max_steps = 3.8e9 // 524288
+    max_steps = 8.1e9 // 524288
     cfg.max_steps = max_steps
     cfg.generate_every = 500
     cfg.eval_every = -1
