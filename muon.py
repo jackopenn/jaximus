@@ -118,6 +118,7 @@ def _shape_factor(x: jax.Array, dim_nums: MuonDimensionNumbers) -> float:
   return math.prod(x.shape[ax] for ax in output_axes) / math.prod(
       x.shape[ax] for ax in reduction_axes)
 
+from jax.sharding import PartitionSpec as P
 
 def _newton_schulz_iterator(x: jax.Array, coeffs: jax.Array) -> jax.Array:
   # Implements Newton-Schulz step f(X) = c_0 X + c_1 (XX^T)X + c_2 (XX^T)^2X,
@@ -125,7 +126,8 @@ def _newton_schulz_iterator(x: jax.Array, coeffs: jax.Array) -> jax.Array:
   # The NS step has the property f(X) = f(X^T)^T. That is, we can get equivalent
   # result by tranposing input and output. In particular, we may tranpose X
   # when rows > cols for effciency.
-  a = jnp.matmul(x, x.T, out_sharding=jax.typeof(x).sharding)
+  # a = jnp.matmul(x, x.T, out_sharding=jax.typeof(x).sharding)
+  a = jnp.matmul(x, x.T, out_sharding=(P()))
   b = coeffs[1] * a + coeffs[2] * a @ a
   return coeffs[0] * x + b @ x
 
