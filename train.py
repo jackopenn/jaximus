@@ -109,11 +109,12 @@ def train_step(model, optimizer, batch):
             ).mean()
         return loss
     with jax.named_scope("value_and_grad"):
-        loss, grads = jax.value_and_grad(loss_fn)(model, batch)
+        loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
     with jax.named_scope("update"):
         optimizer.update(model, grads)
     with jax.named_scope("grad_norm"):
         grad_norm = optax.global_norm(grads)
+    print(loss)
     return loss, grad_norm
 
 

@@ -52,8 +52,8 @@ def get_config():
     cfg.xpu = "v4"
     cfg.wandb = False
 
-    cfg.parallel.strategy = "fsdp"
     cfg.parallel.data = 16
+    cfg.parallel.strategy = "fsdp"
 
     # ---------- optimizer config ----------
     cfg.optim.warmup_pct = 0.0
