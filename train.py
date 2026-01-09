@@ -250,7 +250,9 @@ def train(cfg):
                 model = model_init()
                 grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
             with axis_rules(SHARDED_RULES):
-                optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+                # TODO: optimizer not following sharding rules here ... ( i think it takes on sharding from model)
+                # TODO: tmp fix is calling model_init here too ...
+                optimizer = nnx.Optimizer(model_init(), tx, wrt=nnx.Param)
         
         elif cfg.parallel.zero_stage == 2:
             # Replicated model, sharded grads + optimizer
@@ -258,7 +260,9 @@ def train(cfg):
             with axis_rules(REPLICATED_RULES):
                 model = model_init()
             with axis_rules(SHARDED_RULES):
-                optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+                # TODO: optimizer not following sharding rules here ... ( i think it takes on sharding from model)
+                # TODO: tmp fix is calling model_init here too ...
+                optimizer = nnx.Optimizer(model_init(), tx, wrt=nnx.Param)
                 # TODO: avoid creating the model again here
                 grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model_init()))
         
