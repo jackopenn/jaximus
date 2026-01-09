@@ -250,13 +250,12 @@ def train(cfg):
         elif cfg.parallel.zero_stage == 2:
             # Replicated model, sharded grads + optimizer
             # Use eval_shape to get grad shardings without allocating memory
-            with axis_rules(SHARDED_RULES):
-                abstract_model = nnx.eval_shape(model_init)
-                grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(abstract_model))
             with axis_rules(REPLICATED_RULES):
                 model = model_init()
             with axis_rules(SHARDED_RULES):
                 optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+                # TODO: avoid creating the model again here
+                grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model_init()))
         
         elif cfg.parallel.zero_stage == 3:
             # Sharded model + grads + optimizer
