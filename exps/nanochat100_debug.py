@@ -59,6 +59,7 @@ def get_config():
 
     cfg.parallel.strategy = "dp"
     cfg.parallel.data = 1
+    cfg.parallel.zero_stage = 1
 
     # ---------- optimizer config ----------
     cfg.optim.warmup_pct = 0.0

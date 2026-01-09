@@ -106,7 +106,7 @@ def validate_config(cfg):
         raise ValueError(f"Unknown strategy: {cfg.parallel.strategy}. Only 'dp' is supported.")
 
 
-@nnx.jit
+@nnx.jit(static_argnames=('grads_sharding',))
 def train_step(model, optimizer, grads_sharding, batch):
     def loss_fn(model, batch):
         x, y = batch
