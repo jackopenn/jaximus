@@ -279,7 +279,12 @@ def train(cfg):
         first_layer = model.layers[0]
         print("\n=== Sharding Info ===")
         print("Model (first layer attention q_proj kernel):", first_layer.attention.q_proj.kernel.value.sharding)
-        print("Optimizer (first layer attention q_proj kernel):", optimizer.opt_state[0][0]['other'][0].mu['layers'][0]['attention']['q_proj']['kernel'].value.sharding)
+        # Get optimizer state shardings via tree_map
+        opt_shardings = jax.tree.map(lambda x: x.sharding if hasattr(x, 'sharding') else None, optimizer.opt_state)
+        print("Optimizer state structure shardings (first few):")
+        flat_opt, _ = jax.tree_util.tree_flatten(opt_shardings)
+        for i, s in enumerate(flat_opt[:5]):
+            print(f"  [{i}]: {s}")
         print("Grads sharding (first layer attention q_proj kernel):", grads_sharding['layers'][0]['attention']['q_proj']['kernel'])
         print("=====================\n")
                 
