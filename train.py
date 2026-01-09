@@ -106,27 +106,32 @@ def validate_config(cfg):
         raise ValueError(f"Unknown strategy: {cfg.parallel.strategy}. Only 'dp' is supported.")
 
 
-@nnx.jit(static_argnames=('grads_sharding',))
-def train_step(model, optimizer, grads_sharding, batch):
-    def loss_fn(model, batch):
-        x, y = batch
-        logits = model(x)
-        with jax.named_scope("loss"):
-            loss = optax.softmax_cross_entropy_with_integer_labels(
-                logits.reshape(-1, logits.shape[-1]).astype(jnp.float32),
-                y.reshape(-1)
-            ).mean()
-        return loss
-    with jax.named_scope("value_and_grad"):
-        loss, grads = nnx.jit(
-            nnx.value_and_grad(loss_fn),
-            out_shardings=(None, grads_sharding)
-        )(model, batch)
-    with jax.named_scope("update"):
-        optimizer.update(model, grads)
-    with jax.named_scope("grad_norm"):
-        grad_norm = optax.global_norm(grads)
-    return loss, grad_norm
+def make_train_step(grads_sharding):
+    """Factory that captures grads_sharding via closure before JIT."""
+    @nnx.jit
+    def train_step(model, optimizer, batch):
+        def loss_fn(model, batch):
+            x, y = batch
+            logits = model(x)
+            with jax.named_scope("loss"):
+                loss = optax.softmax_cross_entropy_with_integer_labels(
+                    logits.reshape(-1, logits.shape[-1]).astype(jnp.float32),
+                    y.reshape(-1)
+                ).mean()
+            return loss
+        with jax.named_scope("value_and_grad"):
+            loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
+        with jax.named_scope("shard_grads"):
+            grads = jax.tree.map(
+                lambda g, s: jax.lax.with_sharding_constraint(g, s),
+                grads, grads_sharding
+            )
+        with jax.named_scope("update"):
+            optimizer.update(model, grads)
+        with jax.named_scope("grad_norm"):
+            grad_norm = optax.global_norm(grads)
+        return loss, grad_norm
+    return train_step
 
 
 def train(cfg):
@@ -301,7 +306,7 @@ def train(cfg):
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
 
     # https://flax.readthedocs.io/en/stable/guides/performance.html#caching-graph-node-traversals
-    # cached_train_step = nnx.cached_partial(train_step, model, optimizer, grads_sharding)
+    train_step = nnx.cached_partial(make_train_step(grads_sharding), model, optimizer)
 
     train_iter = iter(dataset)
     step = 1
@@ -315,8 +320,7 @@ def train(cfg):
         if main_process and micro_step == 10: 
             jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
-            # loss, grad_norm = cached_train_step(batch)
-            loss, grad_norm = train_step(model, optimizer, grads_sharding, batch)
+            loss, grad_norm = train_step(batch)
         if main_process and micro_step == 20:
             jax.profiler.stop_trace()
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")
