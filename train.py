@@ -273,6 +273,15 @@ def train(cfg):
         model = model_init()
         grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
         optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+    
+    # Print sharding info for first layer
+    if main_process:
+        first_layer = model.layers[0]
+        print("\n=== Sharding Info ===")
+        print("Model (first layer attention q_proj kernel):", first_layer.attention.q_proj.kernel.value.sharding)
+        print("Optimizer (first layer attention q_proj kernel):", optimizer.opt_state[0][0]['other'][0].mu['layers'][0]['attention']['q_proj']['kernel'].value.sharding)
+        print("Grads sharding (first layer attention q_proj kernel):", grads_sharding['layers'][0]['attention']['q_proj']['kernel'])
+        print("=====================\n")
                 
     if main_process:
         # print model stats
