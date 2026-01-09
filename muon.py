@@ -118,8 +118,9 @@ def _shape_factor(x: jax.Array, dim_nums: MuonDimensionNumbers) -> float:
   return math.prod(x.shape[ax] for ax in output_axes) / math.prod(
       x.shape[ax] for ax in reduction_axes)
 
-from jax.sharding import PartitionSpec as P
+from jax.sharding import PartitionSpec as P, auto_axes
 
+@auto_axes
 def _newton_schulz_iterator(x: jax.Array, coeffs: jax.Array) -> jax.Array:
   # Implements Newton-Schulz step f(X) = c_0 X + c_1 (XX^T)X + c_2 (XX^T)^2X,
   # with quintic form f(X) = c_0 X + (c_1 A + c_2 AA)X, where A = XX^T.
@@ -127,7 +128,8 @@ def _newton_schulz_iterator(x: jax.Array, coeffs: jax.Array) -> jax.Array:
   # result by tranposing input and output. In particular, we may tranpose X
   # when rows > cols for effciency.
   # a = jnp.matmul(x, x.T, out_sharding=jax.typeof(x).sharding)
-  a = jnp.matmul(x, x.T, out_sharding=(P()))
+  # a = jnp.matmul(x, x.T, out_sharding=(P()))
+  a = x @ x.T
   b = coeffs[1] * a + coeffs[2] * a @ a
   return coeffs[0] * x + b @ x
 
@@ -183,7 +185,7 @@ def orthogonalize_via_newton_schulz(
     ns_coeffs_ = ns_coeffs.astype(x.dtype)
     if ns_coeffs_.ndim == 1:
       x = jax.lax.fori_loop(
-          0, ns_steps, lambda _, x: _newton_schulz_iterator(x, ns_coeffs_), x,
+          0, ns_steps, lambda _, x: _newton_schulz_iterator(x, ns_coeffs_, out_sharding=jax.typeof(x).sharding), x,
           unroll=True)  # Unroll to ensure efficient composition with jax.vmap.
     else:
       x, _ = jax.lax.scan(
