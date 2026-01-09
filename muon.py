@@ -31,6 +31,8 @@ def _newton_schulz_iteration(x: jax.Array, coeffs: jax.Array) -> jax.Array:
     b = coeffs[1] * a + coeffs[2] * a @ a
     return coeffs[0] * x + b @ x
 
+
+from jax.sharding import auto_axes
 @auto_axes
 def orthogonalize(x: jax.Array, ns_coeffs: jax.Array, ns_steps: int = 5, eps: float = 1e-8) -> jax.Array:
     """Orthogonalize a 2D matrix via Newton-Schulz iteration.
