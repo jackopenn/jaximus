@@ -44,7 +44,7 @@ import wandb
 from data.hf import get_hf_dataset
 from generate import generate
 from modelling.model import Model
-from parallel import logical_to_physical, set_sharding_strategy
+from parallel import logical_to_physical, shard_init, axis_rules, REPLICATED_RULES, SHARDED_RULES
 from utils import DummyWandb, get_num_params_and_flops, pretty_print_samples, MetricLogger
 
 
@@ -96,9 +96,18 @@ def validate_config(cfg):
         warnings.warn("lm_head_use_bias=True ignored because tie_word_embeddings=True")
         m.lm_head_use_bias = False
 
+    # Parallel config validation
+    if cfg.parallel.strategy == "dp":
+        if cfg.parallel.zero_stage is None:
+            raise ValueError("zero_stage required when strategy='dp'")
+        if cfg.parallel.zero_stage not in (1, 2, 3):
+            raise ValueError("zero_stage must be 1, 2, or 3")
+    elif cfg.parallel.strategy is not None:
+        raise ValueError(f"Unknown strategy: {cfg.parallel.strategy}. Only 'dp' is supported.")
+
 
 @nnx.jit
-def train_step(model, optimizer, batch):
+def train_step(model, optimizer, grads_sharding, batch):
     def loss_fn(model, batch):
         x, y = batch
         logits = model(x)
@@ -109,12 +118,14 @@ def train_step(model, optimizer, batch):
             ).mean()
         return loss
     with jax.named_scope("value_and_grad"):
-        loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
+        loss, grads = nnx.jit(
+            nnx.value_and_grad(loss_fn),
+            out_shardings=(None, grads_sharding)
+        )(model, batch)
     with jax.named_scope("update"):
         optimizer.update(model, grads)
     with jax.named_scope("grad_norm"):
         grad_norm = optax.global_norm(grads)
-    print(loss, jax.typeof(loss))
     return loss, grad_norm
 
 
@@ -143,9 +154,8 @@ def train(cfg):
         num_proc=None,
     )
 
-    # set sharding strategy and init model 
-    set_sharding_strategy(cfg.parallel.strategy)
-    model = Model(rngs=nnx.Rngs(cfg.seed), **cfg.model.to_dict())
+    model_init = partial(Model, rngs=nnx.Rngs(cfg.seed), **cfg.model.to_dict())
+    
     
     # init optimizer
     if main_process:
@@ -222,8 +232,41 @@ def train(cfg):
     )
     # tx = optax.MultiSteps(tx, every_k_schedule=cfg.optim.accum_steps)
     
-    optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
-
+    
+    # ZeRO stages for DP
+    if cfg.parallel.strategy == "dp":
+        if cfg.parallel.zero_stage == 1:
+            # Replicated model + grads, sharded optimizer
+            with axis_rules(REPLICATED_RULES):
+                model = model_init()
+                grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
+            with axis_rules(SHARDED_RULES):
+                optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+        
+        elif cfg.parallel.zero_stage == 2:
+            # Replicated model, sharded grads + optimizer
+            # Use eval_shape to get grad shardings without allocating memory
+            with axis_rules(SHARDED_RULES):
+                abstract_model = nnx.eval_shape(model_init)
+                grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(abstract_model))
+            with axis_rules(REPLICATED_RULES):
+                model = model_init()
+            with axis_rules(SHARDED_RULES):
+                optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+        
+        elif cfg.parallel.zero_stage == 3:
+            # Sharded model + grads + optimizer
+            with axis_rules(SHARDED_RULES):
+                model = model_init()
+                grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
+                optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+    else:
+        # Single XPU - no explicit sharding
+        model = model_init()
+        grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
+        optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+                
+    print(grads_sharding)
     if main_process:
         # print model stats
         num_params, num_flops_per_token = get_num_params_and_flops(model)
@@ -260,7 +303,7 @@ def train(cfg):
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
 
     # https://flax.readthedocs.io/en/stable/guides/performance.html#caching-graph-node-traversals
-    cached_train_step = nnx.cached_partial(train_step, model, optimizer)
+    cached_train_step = nnx.cached_partial(train_step, model, optimizer, grads_sharding)
 
     train_iter = iter(dataset)
     step = 1
