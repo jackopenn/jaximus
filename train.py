@@ -37,6 +37,7 @@ import optax
 import orbax.checkpoint as ocp
 from flax import nnx
 from jax import numpy as jnp
+from jax.sharding import reshard
 from sws import run as sws_run
 from transformers import AutoTokenizer
 
@@ -122,10 +123,7 @@ def make_train_step(grads_sharding):
         with jax.named_scope("value_and_grad"):
             loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
         with jax.named_scope("shard_grads"):
-            grads = jax.tree.map(
-                lambda g, s: jax.lax.with_sharding_constraint(g, s),
-                grads, grads_sharding
-            )
+            grads = jax.tree.map(lambda g, s: reshard(g, s), grads, grads_sharding)
         with jax.named_scope("update"):
             optimizer.update(model, grads)
         with jax.named_scope("grad_norm"):
