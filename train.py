@@ -218,16 +218,16 @@ def train(cfg):
             {
                 "token_embedding": optax.adamw(learning_rate=lr_schedule_te, **adamw_params),
                 "lm_head": optax.adamw(learning_rate=lr_schedule_lm_head, **adamw_params),
-                "other": optax.inject_hyperparams(muon)(
-                    learning_rate=lr_schedule_other,
-                    nesterov=True,
-                    beta=make_muon_momentum_schedule(
-                        cfg.optim.muon_momentum_start,
-                        cfg.optim.muon_momentum_end,
-                        cfg.optim.muon_momentum_warmup_steps,
-                    ),
-                ),
-                # "other": optax.adamw(learning_rate=lr_schedule_other, **adamw_params),
+                # "other": optax.inject_hyperparams(muon)(
+                #     learning_rate=lr_schedule_other,
+                #     nesterov=True,
+                #     beta=make_muon_momentum_schedule(
+                #         cfg.optim.muon_momentum_start,
+                #         cfg.optim.muon_momentum_end,
+                #         cfg.optim.muon_momentum_warmup_steps,
+                #     ),
+                # ),
+                "other": optax.adamw(learning_rate=lr_schedule_other, **adamw_params),
             },
             lambda state: jax.tree.map_with_path(lambda path, _: path[0].key if path[0].key in ("token_embedding", "lm_head") else "other", state)
         )
