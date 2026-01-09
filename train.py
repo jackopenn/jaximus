@@ -101,8 +101,8 @@ def validate_config(cfg):
     if cfg.parallel.strategy == "dp":
         if cfg.parallel.zero_stage is None:
             raise ValueError("zero_stage required when strategy='dp'")
-        if cfg.parallel.zero_stage not in (1, 2, 3):
-            raise ValueError("zero_stage must be 1, 2, or 3")
+        if cfg.parallel.zero_stage not in (0, 1, 2, 3):
+            raise ValueError("zero_stage must be 0, 1, 2, or 3")
     elif cfg.parallel.strategy is not None:
         raise ValueError(f"Unknown strategy: {cfg.parallel.strategy}. Only 'dp' is supported.")
 
@@ -237,7 +237,14 @@ def train(cfg):
     
     # ZeRO stages for DP
     if cfg.parallel.strategy == "dp":
-        if cfg.parallel.zero_stage == 1:
+        if cfg.parallel.zero_stage == 0:
+            # Fully replicated (standard DP, no ZeRO)
+            with axis_rules(REPLICATED_RULES):
+                model = model_init()
+                grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
+                optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+        
+        elif cfg.parallel.zero_stage == 1:
             # Replicated model + grads, sharded optimizer
             with axis_rules(REPLICATED_RULES):
                 model = model_init()
