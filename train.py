@@ -156,7 +156,6 @@ def train(cfg):
 
     model_init = partial(Model, rngs=nnx.Rngs(cfg.seed), **cfg.model.to_dict())
     
-    
     # init optimizer
     if main_process:
         print(f"te_peak_value={cfg.optim.te_peak_value}")
@@ -266,7 +265,6 @@ def train(cfg):
         grads_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
         optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
                 
-    print(grads_sharding)
     if main_process:
         # print model stats
         num_params, num_flops_per_token = get_num_params_and_flops(model)
