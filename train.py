@@ -300,7 +300,7 @@ def train(cfg):
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
 
     # https://flax.readthedocs.io/en/stable/guides/performance.html#caching-graph-node-traversals
-    train_step = make_train_step(model_sharding, optimizer_sharding, batch_sharding)
+    train_step = make_train_step(model_sharding, None, batch_sharding)
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     train_iter = iter(dataset)
