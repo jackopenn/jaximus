@@ -55,7 +55,7 @@ SHARDING_RULES = {
 
 }
 
-_current_strategy = "fsdp"
+_current_strategy = "dp"
 
 
 def logical_to_physical(logical_axes):
@@ -311,11 +311,11 @@ optimizer_state = optimizer.init(model_weights)
 
 
 # Reshard optimizer state to data axis
-# optimizer_state = (
-#     jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
-#     optimizer_state[1],
-#     optimizer_state[2],
-# )
+optimizer_state = (
+    jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
+    optimizer_state[1],
+    optimizer_state[2],
+)
 
 if jax.process_index() == 0:
   print("model_weights sharding:")
@@ -336,7 +336,10 @@ def loss_fn(w, x, y, cos, sin):
     label_logits = jnp.take_along_axis(logits, y[..., jnp.newaxis], axis=-1)
     log_normalizers = jax.nn.logsumexp(logits, axis=-1, keepdims=True)
     return jnp.mean(log_normalizers - label_logits)
-    
+
+
+model_sharding = jax.tree.map(lambda x: x.sharding, model_weights)
+
 @jax.jit
 def train_step(model_weights, optimizer_state, x, y, cos, sin):
     with jax.named_scope("value_and_grad"):
@@ -345,6 +348,7 @@ def train_step(model_weights, optimizer_state, x, y, cos, sin):
         updates, optimizer_state = optimizer.update(grads, optimizer_state, model_weights)
     with jax.named_scope("apply_updates"):
         model_weights = optax.apply_updates(model_weights, updates)
+        model_weights = jax.sharding.reshard(model_weights, model_sharding)
     return model_weights, optimizer_state, loss
 
 if jax.process_index() == 0:
