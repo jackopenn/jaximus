@@ -213,11 +213,11 @@ c = Config()
 
 c.model.seq_len = 2048
 c.model.vocab_size = 50304
-c.model.num_layers = 1
-c.model.hidden_dim = 768
+c.model.num_layers = 20
+c.model.hidden_dim = 1024
 c.model.intermediate_dim = lambda: 4 * c.model.hidden_dim
-c.model.num_attention_heads = 6
-c.model.num_key_value_heads = 3
+c.model.num_attention_heads = 8
+c.model.num_key_value_heads = 8
 c.model.head_dim = lambda: c.model.hidden_dim // c.model.num_attention_heads
 c.model.rope_base = 10000
 
@@ -316,8 +316,8 @@ profiler_options = jax.profiler.ProfileOptions()
 profiler_options.host_tracer_level = 3
 
 
-x = jnp.ones((16, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
-y = jnp.ones((16, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
+x = jnp.ones((32, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
+y = jnp.ones((32, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
 
 cos, sin = precompute_rope_embeddings(c.model.seq_len, c.model.head_dim, c.model.rope_base)
 step = 0
