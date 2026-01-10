@@ -284,11 +284,13 @@ optimizer = optax.adamw(
 )
 optimizer_state = optimizer.init(model_weights)
 
-optimizer_state = (
-    jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
-    optimizer_state[1],
-    optimizer_state[2],
-)
+
+# # Reshard optimizer state to data axis
+# optimizer_state = (
+#     jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
+#     optimizer_state[1],
+#     optimizer_state[2],
+# )
 
 
 def loss_fn(w, x, y, cos, sin):
