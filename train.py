@@ -107,7 +107,7 @@ def validate_config(cfg):
     elif cfg.parallel.strategy == "fsdp":
         if hasattr(cfg.parallel, 'shard_optimizer') and cfg.parallel.shard_optimizer is False:
             warnings.warn("shard_optimizer=False ignored for FSDP (optimizer always sharded)")
-        cfg.parallel.shard_optimizer = True  # FSDP always shards optimizer
+        # cfg.parallel.shard_optimizer = True  # FSDP always shards optimizer
 
 
 @nnx.jit
