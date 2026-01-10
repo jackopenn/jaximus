@@ -291,7 +291,7 @@ optimizer_state = (
 )
 
 
-def loss_fn(w, cos, sin, x, y):
+def loss_fn(w, x, y, cos, sin):
     logits = forward(x, w, cos, sin)
     label_logits = jnp.take_along_axis(logits, y[..., jnp.newaxis], axis=-1)
     log_normalizers = jax.nn.logsumexp(logits, axis=-1, keepdims=True)
