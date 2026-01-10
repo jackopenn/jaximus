@@ -55,7 +55,7 @@ SHARDING_RULES = {
 
 }
 
-_current_strategy = "fsdp"
+_current_strategy = "dp"
 
 
 def logical_to_physical(logical_axes):
@@ -244,26 +244,51 @@ def init_model_weights(
     
     init_fn = jax.nn.initializers.lecun_normal()
     
-    embed = init_fn(next(key_iter), (vocab_size, hidden_dim), dtype=jnp.float32)
+    embed = init_fn(
+        next(key_iter), (vocab_size, hidden_dim), dtype=jnp.float32,
+        out_sharding=logical_to_physical(("model_vocab", "model_embed"))
+    )
     layer_weights = [
         LayerWeights(
             attention_weights=AttentionWeights(
-                q_proj=init_fn(next(key_iter), (hidden_dim, num_attention_heads, head_dim), dtype=jnp.float32),
-                k_proj=init_fn(next(key_iter), (hidden_dim, num_key_value_heads, head_dim), dtype=jnp.float32),
-                v_proj=init_fn(next(key_iter), (hidden_dim, num_key_value_heads, head_dim), dtype=jnp.float32),
-                o_proj=init_fn(next(key_iter), (num_attention_heads, head_dim, hidden_dim), dtype=jnp.float32)
+                q_proj=init_fn(
+                    next(key_iter), (hidden_dim, num_attention_heads, head_dim), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_embed", "model_q", "model_head"))
+                ),
+                k_proj=init_fn(
+                    next(key_iter), (hidden_dim, num_key_value_heads, head_dim), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_embed", "model_kv", "model_head"))
+                ),
+                v_proj=init_fn(
+                    next(key_iter), (hidden_dim, num_key_value_heads, head_dim), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_embed", "model_kv", "model_head"))
+                ),
+                o_proj=init_fn(
+                    next(key_iter), (num_attention_heads, head_dim, hidden_dim), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_q", "model_head", "model_embed"))
+                )
             ),
             mlp_weights = MLPWeights(
-                up_proj=init_fn(next(key_iter), (hidden_dim, intermediate_dim), dtype=jnp.float32),
-                down_proj=init_fn(next(key_iter), (intermediate_dim, hidden_dim), dtype=jnp.float32)
+                up_proj=init_fn(
+                    next(key_iter), (hidden_dim, intermediate_dim), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_embed", "model_intermediate"))
+                ),
+                down_proj=init_fn(
+                    next(key_iter), (intermediate_dim, hidden_dim), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_intermediate", "model_embed"))
+                )
             )
         )
         for _ in range(num_layers)
     ]
-    unembed = init_fn(next(key_iter), (hidden_dim, vocab_size), dtype=jnp.float32)
+    unembed = init_fn(
+        next(key_iter), (hidden_dim, vocab_size), dtype=jnp.float32,
+        out_sharding=logical_to_physical(("model_embed", "model_vocab"))
+    )
     model_weights = ModelWeights(embed=embed, layer_weights=layer_weights, unembed=unembed)
 
     return model_weights
+
 
 
 model_weights = init_model_weights(
@@ -285,13 +310,26 @@ optimizer = optax.adamw(
 optimizer_state = optimizer.init(model_weights)
 
 
-# # Reshard optimizer state to data axis
+# Reshard optimizer state to data axis
 # optimizer_state = (
 #     jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
 #     optimizer_state[1],
 #     optimizer_state[2],
 # )
 
+if jax.process_index() == 0:
+  print("model_weights sharding:")
+  print(f"{model_weights.layer_weights[0].attention_weights.k_proj.sharding=}")
+  print(f"{model_weights.layer_weights[0].attention_weights.v_proj.sharding=}")
+  print(f"{model_weights.layer_weights[0].attention_weights.o_proj.sharding=}")
+  print(f"{model_weights.layer_weights[0].mlp_weights.up_proj.sharding=}")
+  print(f"{model_weights.layer_weights[0].mlp_weights.down_proj.sharding=}")
+  print("optimizer_state sharding:")
+  print(f"{optimizer_state[0].mu.layer_weights[0].attention_weights.k_proj.sharding=}")
+  print(f"{optimizer_state[0].mu.layer_weights[0].attention_weights.v_proj.sharding=}")
+  print(f"{optimizer_state[0].mu.layer_weights[0].attention_weights.o_proj.sharding=}")
+  print(f"{optimizer_state[0].mu.layer_weights[0].mlp_weights.up_proj.sharding=}")
+  print(f"{optimizer_state[0].mu.layer_weights[0].mlp_weights.down_proj.sharding=}")
 
 def loss_fn(w, x, y, cos, sin):
     logits = forward(x, w, cos, sin)
@@ -309,14 +347,14 @@ def train_step(model_weights, optimizer_state, x, y, cos, sin):
         model_weights = optax.apply_updates(model_weights, updates)
     return model_weights, optimizer_state, loss
 
-wandb.init(project="functional-transformer", config=c.to_dict())
+if jax.process_index() == 0:
+  wandb.init(project="functional-transformer", config=c.to_dict())
 
-# init profiler
-os.makedirs("profiles", exist_ok=True)
-profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-profiler_options = jax.profiler.ProfileOptions()
-profiler_options.host_tracer_level = 3
-
+  # init profiler
+  os.makedirs("profiles", exist_ok=True)
+  profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+  profiler_options = jax.profiler.ProfileOptions()
+  profiler_options.host_tracer_level = 3
 
 x = jnp.ones((32, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
 y = jnp.ones((32, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
@@ -324,13 +362,14 @@ y = jnp.ones((32, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_phy
 cos, sin = precompute_rope_embeddings(c.model.seq_len, c.model.head_dim, c.model.rope_base)
 step = 0
 while True:
-    if step == 10:
+    if jax.process_index() == 0 and step == 10:
         jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
     with jax.profiler.StepTraceAnnotation("train", step_num=step):
         model_weights, optimizer_state, loss = train_step(model_weights, optimizer_state, x, y, cos, sin)
-    if step == 20:
+    if jax.process_index() == 0 and step == 20:
         jax.profiler.stop_trace()
         wandb.log_artifact(f"{profile_dir}/", name=f"{wandb.run.id}_profile", type="profile")
         print("done profiling")
+        wandb.finish()
         exit()
     step += 1
