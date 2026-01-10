@@ -243,7 +243,10 @@ def train(cfg):
                 if hasattr(x, 'ndim') and x.ndim > 0:
                     return jax.sharding.reshard(x, P("data", ))
                 return x
-            optimizer.opt_state = jax.tree.map(shard_if_array, optimizer.opt_state)
+            optimizer_state = nnx.state(optimizer, nnx.optimizer.OptState)
+            optimizer_sharded_state = jax.tree.map(shard_if_array, optimizer_state)
+            nnx.update(optimizer, optimizer_sharded_state)
+
     
     elif cfg.parallel.strategy == "fsdp":
         with axis_rules(SHARDED_RULES):
