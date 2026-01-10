@@ -110,24 +110,30 @@ def validate_config(cfg):
         # cfg.parallel.shard_optimizer = True  # FSDP always shards optimizer
 
 
-@nnx.jit
-def train_step(model, optimizer, batch):
-    def loss_fn(model, batch):
-        x, y = batch
-        logits = model(x)
-        with jax.named_scope("loss"):
-            loss = optax.softmax_cross_entropy_with_integer_labels(
-                logits.reshape(-1, logits.shape[-1]).astype(jnp.float32),
-                y.reshape(-1)
-            ).mean()
-        return loss
-    with jax.named_scope("value_and_grad"):
-        loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
-    with jax.named_scope("update"):
-        optimizer.update(model, grads)
-    with jax.named_scope("grad_norm"):
-        grad_norm = optax.global_norm(grads)
-    return loss, grad_norm
+def make_train_step(model_sharding, optimizer_sharding, batch_sharding):
+    """Factory that creates train_step with explicit shardings."""
+    @nnx.jit(
+        in_shardings=(model_sharding, optimizer_sharding, batch_sharding),
+        out_shardings=(None, None)
+    )
+    def train_step(model, optimizer, batch):
+        def loss_fn(model, batch):
+            x, y = batch
+            logits = model(x)
+            with jax.named_scope("loss"):
+                loss = optax.softmax_cross_entropy_with_integer_labels(
+                    logits.reshape(-1, logits.shape[-1]).astype(jnp.float32),
+                    y.reshape(-1)
+                ).mean()
+            return loss
+        with jax.named_scope("value_and_grad"):
+            loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
+        with jax.named_scope("update"):
+            optimizer.update(model, grads)
+        with jax.named_scope("grad_norm"):
+            grad_norm = optax.global_norm(grads)
+        return loss, grad_norm
+    return train_step
 
 def train(cfg):
 
@@ -252,6 +258,11 @@ def train(cfg):
         with axis_rules(SHARDED_RULES):
             model = model_init()
         optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+    
+    # Extract shardings for explicit in/out sharding in train_step
+    model_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
+    optimizer_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(optimizer))
+    batch_sharding = (P("data"), P("data"))  # (x, y) both sharded on batch dim
                 
     if main_process:
         # print model stats
@@ -289,6 +300,7 @@ def train(cfg):
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
 
     # https://flax.readthedocs.io/en/stable/guides/performance.html#caching-graph-node-traversals
+    train_step = make_train_step(model_sharding, optimizer_sharding, batch_sharding)
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     train_iter = iter(dataset)
