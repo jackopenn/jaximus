@@ -55,7 +55,7 @@ SHARDING_RULES = {
 
 }
 
-_current_strategy = "dp"
+_current_strategy = "fsdp"
 
 
 def logical_to_physical(logical_axes):
