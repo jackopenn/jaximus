@@ -110,12 +110,9 @@ def validate_config(cfg):
         # cfg.parallel.shard_optimizer = True  # FSDP always shards optimizer
 
 
-def make_train_step(model_sharding, optimizer_sharding, batch_sharding):
-    """Factory that creates train_step with explicit shardings."""
-    @nnx.jit(
-        in_shardings=(model_sharding, optimizer_sharding, batch_sharding),
-        out_shardings=(None, None)
-    )
+def make_train_step(reshard_model_to_replicated):
+    """Factory for train_step - reshard_model_to_replicated=True for ZeRO-1."""
+    @nnx.jit
     def train_step(model, optimizer, batch):
         def loss_fn(model, batch):
             x, y = batch
@@ -130,6 +127,17 @@ def make_train_step(model_sharding, optimizer_sharding, batch_sharding):
             loss, grads = nnx.value_and_grad(loss_fn)(model, batch)
         with jax.named_scope("update"):
             optimizer.update(model, grads)
+        
+        # For ZeRO-1: force model params back to replicated after update
+        if reshard_model_to_replicated:
+            with jax.named_scope("reshard_model_to_replicated"):
+                model_state = nnx.state(model, nnx.Param)
+                replicated_state = jax.tree.map(
+                    lambda x: jax.sharding.reshard(x, P()) if hasattr(x, 'ndim') and x.ndim > 0 else x,
+                    model_state
+                )
+                nnx.update(model, replicated_state)
+        
         with jax.named_scope("grad_norm"):
             grad_norm = optax.global_norm(grads)
         return loss, grad_norm
@@ -259,10 +267,6 @@ def train(cfg):
             model = model_init()
         optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
     
-    # Extract shardings for explicit in/out sharding in train_step
-    model_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
-    optimizer_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(optimizer))
-    batch_sharding = (P("data"), P("data"))  # (x, y) both sharded on batch dim
                 
     if main_process:
         # print model stats
@@ -300,7 +304,9 @@ def train(cfg):
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
 
     # https://flax.readthedocs.io/en/stable/guides/performance.html#caching-graph-node-traversals
-    train_step = make_train_step(model_sharding, None, batch_sharding)
+    # For ZeRO-1 (DP with shard_optimizer=True), reshard model back to replicated after update
+    reshard_model = (cfg.parallel.strategy == "dp" and cfg.parallel.shard_optimizer)
+    train_step = make_train_step(reshard_model)
     cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     train_iter = iter(dataset)
