@@ -365,6 +365,10 @@ def make_zero_optimizer_update(optimizer, model_weights, optimizer_state):
              out_specs=(updates_spec, opt_state_spec),
              check_rep=False)
     def _zero_update(grads, opt_state, model):
+        # Get axis info for slicing
+        axis_size = jax.lax.psum(1, "data")
+        axis_index = jax.lax.axis_index("data")
+        
         # Reduce-scatter gradients: each device gets 1/N of fully-reduced grads
         def reduce_scatter_grad(g):
             if g.ndim > 1:
@@ -375,9 +379,17 @@ def make_zero_optimizer_update(optimizer, model_weights, optimizer_state):
         
         grads_sharded = jax.tree.map(reduce_scatter_grad, grads)
         
-        # Local optimizer update with sharded grads and sharded state
-        # Note: model is replicated but we pass it through for weight decay
-        updates_sharded, new_opt_state = optimizer.update(grads_sharded, opt_state, model)
+        # Slice model weights to match sharded gradients (for weight decay)
+        def slice_to_shard(arr):
+            if arr.ndim > 1:
+                shard_size = arr.shape[0] // axis_size
+                return jax.lax.dynamic_slice_in_dim(arr, axis_index * shard_size, shard_size, axis=0)
+            return arr
+        
+        model_sharded = jax.tree.map(slice_to_shard, model)
+        
+        # Local optimizer update with sharded grads, sharded state, and sliced model
+        updates_sharded, new_opt_state = optimizer.update(grads_sharded, opt_state, model_sharded)
         
         # All-gather updates to replicate them
         def all_gather_update(u):
