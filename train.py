@@ -286,7 +286,7 @@ def train(cfg):
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
 
     # https://flax.readthedocs.io/en/stable/guides/performance.html#caching-graph-node-traversals
-    train_step = nnx.cached_partial(train_step, model, optimizer)
+    cached_train_step = nnx.cached_partial(train_step, model, optimizer)
 
     train_iter = iter(dataset)
     step = 1
@@ -302,7 +302,7 @@ def train(cfg):
         if main_process and micro_step == 10: 
             jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
-            loss, grad_norm = train_step(batch)
+            loss, grad_norm = cached_train_step(batch)
         if main_process and micro_step == 20:
             jax.profiler.stop_trace()
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")
