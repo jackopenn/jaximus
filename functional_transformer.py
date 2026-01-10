@@ -216,8 +216,8 @@ c.model.vocab_size = 50304
 c.model.num_layers = 20
 c.model.hidden_dim = 1024
 c.model.intermediate_dim = lambda: 4 * c.model.hidden_dim
-c.model.num_attention_heads = 8
-c.model.num_key_value_heads = 8
+c.model.num_attention_heads = 16
+c.model.num_key_value_heads = 16
 c.model.head_dim = lambda: c.model.hidden_dim // c.model.num_attention_heads
 c.model.rope_base = 10000
 
