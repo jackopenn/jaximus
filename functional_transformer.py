@@ -11,6 +11,57 @@ import os
 from datetime import datetime
 from tqdm import tqdm
 
+from jax.sharding import AxisType, NamedSharding, PartitionSpec as P
+
+
+mesh = jax.make_mesh((16,), ("data",), (AxisType.Explicit,))
+jax.set_mesh(mesh)
+print(f"{mesh=}")
+
+
+
+SHARDING_RULES = {
+    "dp": {
+        "batch": "data",
+        "act_seq": None,
+        "act_vocab": None,
+        "act_embed": None,
+        "act_intermediate": None,
+        "act_q": None,
+        "act_kv": None,
+        "model_seq": None,
+        "model_vocab": None,
+        "model_embed": None,
+        "model_intermediate": None,
+        "model_q": None,
+        "model_kv": None,
+    },
+    "fsdp": {
+        "batch": "data",
+        "act_seq": None,
+        "act_vocab": None,
+        "act_embed": None,
+        "act_intermediate": None,
+        "act_q": None,
+        "act_kv": None,
+        "model_seq": None,
+        "model_vocab": "data",
+        "model_embed": None,
+        "model_intermediate": "data",
+        "model_q": None,
+        "model_kv": None,
+        "model_head": "data",
+    },
+
+}
+
+_current_strategy = "dp"
+
+
+def logical_to_physical(logical_axes):
+    rules = SHARDING_RULES[_current_strategy]
+    return P(*[rules.get(axis, None) for axis in logical_axes])
+
 
 @jax.tree_util.register_dataclass
 @dataclass
@@ -46,19 +97,19 @@ class ModelWeights:
   layer_weights: List[LayerWeights]
   unembed: jax.Array
 
-def rms_norm(x, eps=1e-6):
-    return (x * jax.lax.rsqrt(jnp.mean(x.astype(jnp.float32) ** 2, axis=-1, keepdims=True) + eps)).astype(x.dtype)
+def rms_norm(x, eps = 1e-6):
+  return (x * jax.lax.rsqrt(jnp.mean(x.astype(jnp.float32) ** 2, axis=-1, keepdims=True) + eps)).astype(x.dtype)
 
 
 def precompute_rope_embeddings(seq_len, head_dim, base):
-    channel_range = jnp.arange(0, head_dim, 2, dtype=jnp.float32)
-    inv_freq = 1.0 / (base ** (channel_range / head_dim))
-    t = jnp.arange(seq_len, dtype=jnp.float32)
-    freqs = jnp.outer(t, inv_freq)
-    cos, sin = jnp.cos(freqs), jnp.sin(freqs)
-    cos, sin = cos.astype(jnp.bfloat16), sin.astype(jnp.bfloat16)
-    cos, sin = cos[None, :, None, :], sin[None, :, None, :]
-    return cos, sin
+  channel_range = jnp.arange(0, head_dim, 2, dtype=jnp.float32)
+  inv_freq = 1.0 / (base ** (channel_range / head_dim))
+  t = jnp.arange(seq_len, dtype=jnp.float32)
+  freqs = jnp.outer(t, inv_freq)
+  cos, sin = jnp.cos(freqs), jnp.sin(freqs)
+  cos, sin = cos.astype(jnp.bfloat16), sin.astype(jnp.bfloat16)
+  cos, sin = cos[None, :, None, :], sin[None, :, None, :]
+  return cos, sin
 
 
 def apply_rope(x, cos, sin):
@@ -70,106 +121,92 @@ def apply_rope(x, cos, sin):
   
 
 def attention(x, w: AttentionWeights, cos, sin):
-    # B = batch size
-    # D = embedding dimension
-    # S = length of the key/value (source)
-    # T = length of the query (target)
-    # N = number of attention heads
-    # H = dimensions of each attention head
-    # K = number of key/value heads
-    # G = number of groups, which equals to N // K
+  # B = batch size
+  # D = embedding dimension
+  # S = length of the key/value (source)
+  # T = length of the query (target)
+  # N = number of attention heads
+  # H = dimensions of each attention head
+  # K = number of key/value heads
+  # G = number of groups, which equals to N // K
+  
+  T = x.shape[1]
+  H = w.q_proj.shape[2]
+  G = w.q_proj.shape[1] // w.k_proj.shape[1]
+  
+  q = jnp.einsum(
+    "BTD, DNH -> BTNH", x, w.q_proj.astype(jnp.bfloat16),
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_q", "act_head"))
+    )
+  k = jnp.einsum(
+    "BSD, DKH -> BSKH", x, w.k_proj.astype(jnp.bfloat16),
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_kv", "act_head"))
+  )
+  v = jnp.einsum(
+    "BSD, DKH -> BSKH", x, w.v_proj.astype(jnp.bfloat16),
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_kv", "act_head"))
+  )
 
-    T = x.shape[1]
-    H = w.q_proj.shape[2]
-    G = w.q_proj.shape[1] // w.k_proj.shape[1]
+  q = apply_rope(q, cos, sin)
+  k = apply_rope(k, cos, sin)
 
-    with jax.named_scope("q_proj"):
-        q = jnp.einsum("BTD, DNH -> BTNH", x, w.q_proj.astype(jnp.bfloat16))
-    with jax.named_scope("k_proj"):
-        k = jnp.einsum("BSD, DKH -> BSKH", x, w.k_proj.astype(jnp.bfloat16))
-    with jax.named_scope("v_proj"):
-        v = jnp.einsum("BSD, DKH -> BSKH", x, w.v_proj.astype(jnp.bfloat16))
+  q = rms_norm(q)
+  k = rms_norm(k)
 
-    with jax.named_scope("rope"):
-        q = apply_rope(q, cos, sin)
-        k = apply_rope(k, cos, sin)
+  k = jnp.repeat(
+    k, G, axis=2,
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_q", "act_head"))
+  )
+  v = jnp.repeat(
+    v, G, axis=2,
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_q", "act_head"))
+  )
+  
+  logits = jnp.einsum(
+    "BTNH, BSNH -> BNTS", q, k,
+    out_sharding=logical_to_physical(("batch", "act_q", "act_seq", "act_seq"))
+  )
+  logits *= jax.lax.rsqrt(jnp.array(H, dtype=jnp.bfloat16))
+  causal_mask = jnp.tril(jnp.ones((T, T,), dtype=jnp.bfloat16))
+  masked_logits = jnp.where(causal_mask, logits, jnp.array(float("-inf"), dtype=jnp.bfloat16))
+  probs = jax.nn.softmax(masked_logits.astype(jnp.float32), axis=-1).astype(jnp.bfloat16)
+  encoded = jnp.einsum(
+    "BNTS, BSNH -> BTNH", probs, v,
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_q", "act_head"))
+  )
+  out = jnp.einsum(
+    "BTNH, NHD -> BTD", encoded, w.o_proj.astype(jnp.bfloat16),
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_embed"))
+  )
 
-    with jax.named_scope("qk_norm"):
-        q = rms_norm(q)
-        k = rms_norm(k)
-
-    with jax.named_scope("repeat_kv"):
-        k = jnp.repeat(k, G, axis=2)
-        v = jnp.repeat(v, G, axis=2)
-
-    with jax.named_scope("attention_scores"):
-        logits = jnp.einsum("BTNH, BSNH -> BNTS", q, k)
-        logits *= jax.lax.rsqrt(jnp.array(H, dtype=jnp.bfloat16))
-        causal_mask = jnp.tril(jnp.ones((T, T,), dtype=jnp.bfloat16))
-        masked_logits = jnp.where(causal_mask, logits, jnp.array(float("-inf"), dtype=jnp.bfloat16))
-
-    with jax.named_scope("softmax"):
-        probs = jax.nn.softmax(masked_logits.astype(jnp.float32), axis=-1).astype(jnp.bfloat16)
-
-    with jax.named_scope("attention_output"):
-        encoded = jnp.einsum("BNTS, BSNH -> BTNH", probs, v)
-
-    with jax.named_scope("o_proj"):
-        out = jnp.einsum("BTNH, NHD -> BTD", encoded, w.o_proj.astype(jnp.bfloat16))
-
-    return out
+  return out
 
 def mlp(x, w: MLPWeights):
-    with jax.named_scope("up_proj"):
-        h = x @ w.up_proj.astype(jnp.bfloat16)
-    with jax.named_scope("act"):
-        h = jax.nn.silu(h)
-    with jax.named_scope("down_proj"):
-        out = h @ w.down_proj.astype(jnp.bfloat16)
-    return out
-
-
-def glu(x, w: GLUWeights):
-    with jax.named_scope("gate_proj"):
-        gate = x @ w.gate_proj.astype(jnp.bfloat16)
-    with jax.named_scope("up_proj"):
-        up = x @ w.up_proj.astype(jnp.bfloat16)
-    with jax.named_scope("act"):
-        h = jax.nn.silu(gate) * up
-    with jax.named_scope("down_proj"):
-        out = h @ w.down_proj.astype(jnp.bfloat16)
-    return out
+  intermediate = jnp.matmul(
+    x, w.up_proj.astype(jnp.bfloat16),
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_intermediate"))
+  )
+  return jnp.matmul(
+    jax.nn.silu(intermediate), w.down_proj.astype(jnp.bfloat16),
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_embed"))
+  )
 
 
 def layer(x, w: LayerWeights, cos, sin):
-    residual = x
-    with jax.named_scope("att_pre_norm"):
-        x = rms_norm(x)
-    with jax.named_scope("attention"):
-        x = attention(x, w.attention_weights, cos, sin)
-    with jax.named_scope("add_residual"):
-        x = x + residual
-
-    residual = x
-    with jax.named_scope("mlp_pre_norm"):
-        x = rms_norm(x)
-    with jax.named_scope("mlp"):
-        x = mlp(x, w.mlp_weights)
-    with jax.named_scope("add_residual"):
-        x = x + residual
-    return x
-
+  x = x + attention(rms_norm(x), w.attention_weights, cos, sin)
+  x = x + mlp(rms_norm(x), w.mlp_weights)
+  return x
 
 @jax.jit
 def forward(x, w: ModelWeights, cos, sin):
-    with jax.named_scope("embed"):
-        x = w.embed[x].astype(jnp.bfloat16)
-    for i, layer_weights in enumerate(w.layer_weights):
-        with jax.named_scope(f"layer_{i}"):
-            x = layer(x, layer_weights, cos, sin)
-    with jax.named_scope("unembed"):
-        logits = x @ w.unembed.astype(jnp.bfloat16)
-    return logits
+  x = w.embed.at[x].get(out_sharding=logical_to_physical(("batch", "act_seq", "act_embed"))).astype(jnp.bfloat16)
+  for layer_weights in w.layer_weights:
+    x = layer(x, layer_weights, cos, sin)
+  logits = jnp.matmul(
+    x, w.unembed.astype(jnp.bfloat16),
+    out_sharding=logical_to_physical(("batch", "act_seq", "act_vocab"))
+  )
+  return logits
 
 
 c = Config()
@@ -247,17 +284,18 @@ optimizer = optax.adamw(
 )
 optimizer_state = optimizer.init(model_weights)
 
+optimizer_state = (
+    jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
+    optimizer_state[1],
+    optimizer_state[2],
+)
 
-def loss_fn(w, x, y, cos, sin):
-    with jax.named_scope("forward"):
-        logits = forward(x, w, cos, sin)
-    with jax.named_scope("loss"):
-        logits = logits.reshape(-1, logits.shape[-1])
-        labels = y.reshape(-1, 1)
-        label_logits = jnp.take_along_axis(logits, labels, axis=-1)
-        log_normalizers = jax.nn.logsumexp(logits, axis=-1)
-        loss = jnp.mean(log_normalizers - label_logits)
-    return loss
+
+def loss_fn(w, cos, sin, x, y):
+    logits = forward(x, w, cos, sin)
+    label_logits = jnp.take_along_axis(logits, y[..., jnp.newaxis], axis=-1)
+    log_normalizers = jax.nn.logsumexp(logits, axis=-1, keepdims=True)
+    return jnp.mean(log_normalizers - label_logits)
     
 @jax.jit
 def train_step(model_weights, optimizer_state, x, y, cos, sin):
@@ -277,8 +315,9 @@ profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 profiler_options = jax.profiler.ProfileOptions()
 profiler_options.host_tracer_level = 3
 
-x = jnp.ones((16, c.model.seq_len), dtype=jnp.int32)
-y = jnp.ones((16, c.model.seq_len), dtype=jnp.int32)
+
+x = jnp.ones((16, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
+y = jnp.ones((16, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
 
 cos, sin = precompute_rope_embeddings(c.model.seq_len, c.model.head_dim, c.model.rope_base)
 step = 0
