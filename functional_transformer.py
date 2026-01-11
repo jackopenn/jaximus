@@ -57,7 +57,7 @@ SHARDING_RULES = {
 
 }
 
-_current_strategy = "dp"
+_current_strategy = "fsdp"
 
 
 def logical_to_physical(logical_axes):
@@ -312,11 +312,11 @@ optimizer = optax.adamw(
 optimizer_state = optimizer.init(model_weights)
 
 # Reshard optimizer state to data axis
-optimizer_state = (
-    jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
-    optimizer_state[1],
-    optimizer_state[2],
-)
+# optimizer_state = (
+#     jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
+#     optimizer_state[1],
+#     optimizer_state[2],
+# )
 
 if jax.process_index() == 0:
   print("model_weights sharding:")
@@ -445,7 +445,7 @@ while True:
         jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
     with jax.profiler.StepTraceAnnotation("train", step_num=step):
         model_weights, optimizer_state, loss = train_step(model_weights, optimizer_state, x, y, cos, sin)
-    if jax.process_index() == 0 and step == 20:
+    if jax.process_index() == 0 and step == 30:
         jax.profiler.stop_trace()
         wandb.log_artifact(f"{profile_dir}/", name=f"{wandb.run.id}_profile", type="profile")
         print("done profiling")
