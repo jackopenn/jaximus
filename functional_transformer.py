@@ -311,7 +311,6 @@ optimizer = optax.adamw(
 )
 optimizer_state = optimizer.init(model_weights)
 
-
 # Reshard optimizer state to data axis
 optimizer_state = (
     jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
@@ -340,85 +339,88 @@ def loss_fn(w, x, y, cos, sin):
     return jnp.mean(log_normalizers - label_logits)
 
 
-def make_zero_optimizer_update(optimizer, model_weights, optimizer_state):
-    """Create a ZeRO-1/2 style update function with proper specs for the given structures."""
+# def make_zero_optimizer_update(optimizer, model_weights, optimizer_state):
+#     """Create a ZeRO-1/2 style update function with proper specs for the given structures."""
     
-    # Build partition specs matching the pytree structures
-    # Grads and model weights are replicated (P())
-    # Optimizer state is sharded on first axis for arrays with ndim > 1
-    grads_spec = jax.tree.map(lambda _: P(), model_weights)
-    model_spec = jax.tree.map(lambda _: P(), model_weights)
+#     # Build partition specs matching the pytree structures
+#     # Grads and model weights are replicated (P())
+#     # Optimizer state is sharded on first axis for arrays with ndim > 1
+#     grads_spec = jax.tree.map(lambda _: P(), model_weights)
+#     model_spec = jax.tree.map(lambda _: P(), model_weights)
     
-    # For optimizer state: shard arrays with ndim > 1 on first axis, replicate scalars/1D
-    def opt_state_to_spec(x):
-        if hasattr(x, 'ndim') and x.ndim > 1:
-            return P("data",)
-        return P()
+#     # For optimizer state: shard arrays with ndim > 1 on first axis, replicate scalars/1D
+#     def opt_state_to_spec(x):
+#         if hasattr(x, 'ndim') and x.ndim > 1:
+#             return P("data",)
+#         return P()
     
-    opt_state_spec = jax.tree.map(opt_state_to_spec, optimizer_state)
+#     opt_state_spec = jax.tree.map(opt_state_to_spec, optimizer_state)
     
-    # Output specs: updates are replicated, optimizer state stays sharded
-    updates_spec = jax.tree.map(lambda _: P(), model_weights)
+#     # Output specs: updates are replicated, optimizer state stays sharded
+#     updates_spec = jax.tree.map(lambda _: P(), model_weights)
     
-    @partial(shard_map, mesh=mesh,
-             in_specs=(grads_spec, opt_state_spec, model_spec),
-             out_specs=(updates_spec, opt_state_spec),
-             check_rep=False)
-    def _zero_update(grads, opt_state, model):
-        # Get axis info for slicing
-        axis_size = jax.lax.psum(1, "data")
-        axis_index = jax.lax.axis_index("data")
+#     @partial(shard_map, mesh=mesh,
+#              in_specs=(grads_spec, opt_state_spec, model_spec),
+#              out_specs=(updates_spec, opt_state_spec),
+#              check_rep=False)
+#     def _zero_update(grads, opt_state, model):
+#         # Get axis info for slicing
+#         axis_size = jax.lax.psum(1, "data")
+#         axis_index = jax.lax.axis_index("data")
         
-        # Reduce-scatter gradients: each device gets 1/N of fully-reduced grads
-        def reduce_scatter_grad(g):
-            if g.ndim > 1:
-                return jax.lax.psum_scatter(g, "data", scatter_dimension=0, tiled=True)
-            else:
-                # For 1D arrays (scalars after vmap, biases, etc.), just reduce
-                return jax.lax.pmean(g, "data")
+#         # Reduce-scatter gradients: each device gets 1/N of fully-reduced grads
+#         def reduce_scatter_grad(g):
+#             if g.ndim > 1:
+#                 return jax.lax.psum_scatter(g, "data", scatter_dimension=0, tiled=True)
+#             else:
+#                 # For 1D arrays (scalars after vmap, biases, etc.), just reduce
+#                 return jax.lax.pmean(g, "data")
         
-        grads_sharded = jax.tree.map(reduce_scatter_grad, grads)
+#         grads_sharded = jax.tree.map(reduce_scatter_grad, grads)
         
-        # Slice model weights to match sharded gradients (for weight decay)
-        def slice_to_shard(arr):
-            if arr.ndim > 1:
-                shard_size = arr.shape[0] // axis_size
-                return jax.lax.dynamic_slice_in_dim(arr, axis_index * shard_size, shard_size, axis=0)
-            return arr
+#         # Slice model weights to match sharded gradients (for weight decay)
+#         def slice_to_shard(arr):
+#             if arr.ndim > 1:
+#                 shard_size = arr.shape[0] // axis_size
+#                 return jax.lax.dynamic_slice_in_dim(arr, axis_index * shard_size, shard_size, axis=0)
+#             return arr
         
-        model_sharded = jax.tree.map(slice_to_shard, model)
+#         model_sharded = jax.tree.map(slice_to_shard, model)
         
-        # Local optimizer update with sharded grads, sharded state, and sliced model
-        updates_sharded, new_opt_state = optimizer.update(grads_sharded, opt_state, model_sharded)
+#         # Local optimizer update with sharded grads, sharded state, and sliced model
+#         updates_sharded, new_opt_state = optimizer.update(grads_sharded, opt_state, model_sharded)
         
-        # All-gather updates to replicate them
-        def all_gather_update(u):
-            if u.ndim > 1:
-                return jax.lax.all_gather(u, "data", axis=0, tiled=True)
-            else:
-                return u
+#         # All-gather updates to replicate them
+#         def all_gather_update(u):
+#             if u.ndim > 1:
+#                 return jax.lax.all_gather(u, "data", axis=0, tiled=True)
+#             else:
+#                 return u
         
-        updates_full = jax.tree.map(all_gather_update, updates_sharded)
+#         updates_full = jax.tree.map(all_gather_update, updates_sharded)
         
-        return updates_full, new_opt_state
+#         return updates_full, new_opt_state
     
-    return _zero_update
+#     return _zero_update
 
-
-# Create the ZeRO update function with the actual structures
-zero_update = make_zero_optimizer_update(optimizer, model_weights, optimizer_state)
+# # Create the ZeRO update function with the actual structures
+# zero_update = make_zero_optimizer_update(optimizer, model_weights, optimizer_state)
 
 model_sharding = jax.tree.map(lambda x: x.sharding, model_weights)
+optimizer_sharding = jax.tree.map(lambda x: x.sharding, optimizer_state)
 
-@jax.jit
+@jax.jit(
+  in_shardings=(model_sharding, optimizer_sharding, P("data",), P("data",), P(), P()),
+  out_shardings=(model_sharding, optimizer_sharding, None)
+)
 def train_step(model_weights, optimizer_state, x, y, cos, sin):
     with jax.named_scope("value_and_grad"):
         loss, grads = jax.value_and_grad(loss_fn)(model_weights, x, y, cos, sin)
-    with jax.named_scope("zero_update"):
-        updates, optimizer_state = zero_update(grads, optimizer_state, model_weights)
+    with jax.named_scope("update"):
+        # updates, optimizer_state = zerop_update(grads, optimizer_state, model_weights)
+        updates, optimizer = optimizer.update(grads, optimizer_state, model_weights)
     with jax.named_scope("apply_updates"):
         model_weights = optax.apply_updates(model_weights, updates)
-        # No reshard needed - updates are already replicated via all_gather in zero_update
     return model_weights, optimizer_state, loss
 
 if jax.process_index() == 0:
@@ -434,6 +436,9 @@ x = jnp.ones((32, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_phy
 y = jnp.ones((32, c.model.seq_len), dtype=jnp.int32, out_sharding=logical_to_physical(("batch", "seq")))
 
 cos, sin = precompute_rope_embeddings(c.model.seq_len, c.model.head_dim, c.model.rope_base)
+cos = jax.sharding.reshard(cos, P())
+sin = jax.sharding.reshard(sin, P())
+
 step = 0
 while True:
     if jax.process_index() == 0 and step == 10:
