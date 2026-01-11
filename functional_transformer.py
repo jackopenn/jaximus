@@ -418,7 +418,7 @@ def train_step(model_weights, optimizer_state, x, y, cos, sin):
         loss, grads = jax.value_and_grad(loss_fn)(model_weights, x, y, cos, sin)
     with jax.named_scope("update"):
         # updates, optimizer_state = zerop_update(grads, optimizer_state, model_weights)
-        updates, optimizer = optimizer.update(grads, optimizer_state, model_weights)
+        updates, optimizer_state = optimizer.update(grads, optimizer_state, model_weights)
     with jax.named_scope("apply_updates"):
         model_weights = optax.apply_updates(model_weights, updates)
     return model_weights, optimizer_state, loss
