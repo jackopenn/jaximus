@@ -114,4 +114,4 @@ def make_optimizer(cfg):
     )
     tx = optax.MultiSteps(tx, every_k_schedule=cfg.optim.accum_steps)
     
-    return tx, schedule_fns
+    return tx

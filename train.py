@@ -106,13 +106,16 @@ def train(cfg):
     model_weights = init_model_weights(model_config, key)
 
     # init optimizer
-    tx, schedule_fns = make_optimizer(cfg)
+    tx = make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
     
     num_params = sum(x.size for x in jax.tree_util.tree_leaves(model_weights))
+    num_embed_params = model_weights.embed.size + (model_weights.pos_embed.size if model_weights.pos_embed is not None else 0)
+    num_flops_per_token = (
+        6 * (num_params - num_embed_params) 
+        + model_config.num_layers * 12 * model_config.num_attention_heads * model_config.head_dim * model_config.max_seq_len
+    )
     if main_process:
-        # TODO: update this to use the actual number of flops per token
-        num_flops_per_token = num_params * 4 * 2 * cfg.data.max_length
         print(f"{num_params=}")
         print(f"{num_flops_per_token=}")
 
