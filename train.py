@@ -154,12 +154,14 @@ def train(cfg):
     while step <= cfg.max_steps:
         batch = next(train_iter)
         batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(input_sharding, x), batch)
+        print(batch[0].shape, batch[1].shape)
 
         # train step (profile steps 10-20)
         if main_process and micro_step == 10: 
             jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
             model_weights, opt_weights, loss, grad_norm = train_step(model_weights, opt_weights, batch)
+            print(loss)
         if main_process and micro_step == 20:
             jax.profiler.stop_trace()
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")
@@ -172,8 +174,11 @@ def train(cfg):
 
             # log metrics
             if main_process:
+                print("logging metrics")
                 with jax.default_device("cpu"):
                     lrs = {f"{k}_lr": v(step) for k, v in schedule_fns.items()}
+                
+                print("logging metrics 2")
                 train_logger.log({
                     "loss": loss,
                     "grad_norm": grad_norm,
