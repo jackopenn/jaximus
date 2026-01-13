@@ -45,6 +45,8 @@ def get_config():
     cfg.model.norm_type = "rms"
     cfg.model.norm_position = "pre"
     cfg.model.norm_epsilon = 1e-6
+    cfg.model.norm_scale = True
+    cfg.model.norm_bias = False
     cfg.model.mlp_type = "mlp"
     cfg.model.act_fn = "relu_squared"
     cfg.model.attn_use_bias = False

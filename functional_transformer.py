@@ -16,7 +16,7 @@ from jax.sharding import AxisType, NamedSharding, PartitionSpec as P
 from jax.experimental.shard_map import shard_map
 
 
-mesh = jax.make_mesh((16,), ("data",), (AxisType.Explicit,))
+mesh = jax.make_mesh((1,), ("data",), (AxisType.Explicit,))
 jax.set_mesh(mesh)
 print(f"{mesh=}")
 
@@ -215,11 +215,11 @@ c = Config()
 
 c.model.seq_len = 2048
 c.model.vocab_size = 50304
-c.model.num_layers = 20
-c.model.hidden_dim = 1024
+c.model.num_layers = 1
+c.model.hidden_dim = 256
 c.model.intermediate_dim = lambda: 4 * c.model.hidden_dim
-c.model.num_attention_heads = 16
-c.model.num_key_value_heads = 16
+c.model.num_attention_heads = 2
+c.model.num_key_value_heads = 2
 c.model.head_dim = lambda: c.model.hidden_dim // c.model.num_attention_heads
 c.model.rope_base = 10000
 

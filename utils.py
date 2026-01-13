@@ -1,29 +1,6 @@
 import re
 from datetime import datetime
 import jax
-from flax import nnx
-
-def get_num_params_and_flops(model):
-    _, params = nnx.split(model, nnx.Param)
-
-    nparams = sum(x.size for x in jax.tree_util.tree_leaves(params))
-    embed_params = model.token_embedding.embedding.size
-
-    try:
-        embed_params += model.pos_embedding.embedding.size
-    except AttributeError:
-        pass
-
-    l, h, q, t = (
-        model.num_layers,
-        model.num_attention_heads,
-        model.head_dim,
-        model.max_seq_len,
-    )
-
-    nflops_per_token = 6 * (nparams - embed_params) + 12 * l * h * q * t
-
-    return nparams, nflops_per_token
 
 
 def get_xpu_peak_flops(xpu_name):   

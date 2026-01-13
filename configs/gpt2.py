@@ -13,6 +13,8 @@ def gpt2_small():
     cfg.norm_type = "layer"
     cfg.norm_position = "pre"
     cfg.norm_epsilon = 1e-5
+    cfg.norm_scale = True   # RMSNorm: optional. LayerNorm: always True (ignored)
+    cfg.norm_bias = False   # RMSNorm: always False (ignored). LayerNorm: optional
     cfg.mlp_type = "mlp"
     cfg.act_fn = "gelu"
     cfg.attn_use_bias = False
@@ -25,6 +27,9 @@ def gpt2_small():
     cfg.position_embedding_type = "learned"
     cfg.rope_theta = None
     cfg.tie_word_embeddings = True
-    cfg.init_strategy = "mup"
+    cfg.init_strategy = "default"
+    cfg.softcap = None
     cfg.dtype = "bfloat16"
+    cfg.post_embed_norm = False
+    cfg.pre_lm_head_norm = True
     return cfg

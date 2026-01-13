@@ -12,7 +12,6 @@ from jax.sharding import PartitionSpec as P
 #   - down_proj: (model_intermediate, model_embed)
 # LM Head: 
 #   - lm_head: (model_embed, model_vocab)
-
 SHARDING_RULES = {
     "dp": {
         "batch": "data",
@@ -28,6 +27,7 @@ SHARDING_RULES = {
         "model_intermediate": None,
         "model_q": None,
         "model_kv": None,
+        "model_head": None,
     },
     "fsdp": {
         "batch": "data",
@@ -41,8 +41,9 @@ SHARDING_RULES = {
         "model_vocab": "data",
         "model_embed": None,
         "model_intermediate": "data",
-        "model_q": "data",
-        "model_kv": "data",
+        "model_q": None,
+        "model_kv": None,
+        "model_head": "data",
     },
 
 }

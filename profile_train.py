@@ -18,55 +18,50 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 #     # "--xla_tpu_megacore_fusion_allow_ags=true "
 # )
 
-from muon import muon
-
 # Must initialize distributed JAX BEFORE any other JAX imports
 # Check env var to determine if multihost mode is needed
 if os.environ.get("JAX_MULTIHOST", "0") == "1":
     import jax
     jax.distributed.initialize()
 
-from functools import partial
-import time
 from datetime import datetime
-import warnings
 
 import jax
-from jax.sharding import AxisType, PartitionSpec as P
+from jax.sharding import AxisType
 import optax
-import orbax.checkpoint as ocp
-from flax import nnx
 from jax import numpy as jnp
 from sws import run as sws_run
-from transformers import AutoTokenizer
 
 import wandb
-from data.hf import get_hf_dataset
-from generate import generate
-from modelling.model import Model
+from modelling.model import forward, init_model_weights, make_config
 from parallel import logical_to_physical, set_sharding_strategy
-from utils import DummyWandb, get_num_params_and_flops, pretty_print_samples, MetricLogger
+from utils import DummyWandb
 
 
-
-
-
-@nnx.jit
-def train_step(model, optimizer, batch):
-    def loss_fn(model, batch):
+def make_train_step(optimizer, model_config):
+    """Create a JIT-compiled train step function."""
+    
+    def loss_fn(weights, batch):
         x, y = batch
-        logits = model(x)
+        logits = forward(x, weights, model_config)
         with jax.named_scope("loss"):
             loss = optax.softmax_cross_entropy_with_integer_labels(
                 logits.reshape(-1, logits.shape[-1]).astype(jnp.float32),
                 y.reshape(-1)
             ).mean()
         return loss
-    with jax.named_scope("value_and_grad"):
-        loss, grads = jax.value_and_grad(loss_fn)(model, batch)
-    with jax.named_scope("update"):
-        optimizer.update(model, grads)
-    return loss
+    
+    @jax.jit
+    def train_step(weights, opt_state, batch):
+        with jax.named_scope("value_and_grad"):
+            loss, grads = jax.value_and_grad(loss_fn)(weights, batch)
+        with jax.named_scope("update"):
+            updates, opt_state = optimizer.update(grads, opt_state, weights)
+        with jax.named_scope("apply_updates"):
+            weights = optax.apply_updates(weights, updates)
+        return weights, opt_state, loss
+    
+    return train_step
 
 
 def train(cfg):
@@ -78,13 +73,16 @@ def train(cfg):
     if main_process:
         print(f"{mesh=}")
 
-
     # set sharding strategy and init model 
     set_sharding_strategy(cfg.parallel.strategy)
-    model = Model(rngs=nnx.Rngs(cfg.seed), **cfg.model.to_dict())
+    
+    # Create model config and initialize weights
+    model_config = make_config(cfg.model.to_dict())
+    key = jax.random.PRNGKey(cfg.seed)
+    weights = init_model_weights(model_config, key, init_strategy=cfg.model.init_strategy)
   
     tx = optax.adamw(learning_rate=0.01)
-    optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+    opt_state = tx.init(weights)
 
     if main_process:
         # init logging
@@ -96,8 +94,8 @@ def train(cfg):
         profiler_options = jax.profiler.ProfileOptions()
         profiler_options.host_tracer_level = 3
 
-    # https://flax.readthedocs.io/en/stable/guides/performance.html#caching-graph-node-traversals
-    cached_train_step = nnx.cached_partial(train_step, model, optimizer)
+    # Create JIT-compiled train step
+    train_step = make_train_step(tx, model_config)
     
     key = jax.random.key(cfg.seed)
     xkey, ykey = jax.random.split(key)
@@ -112,7 +110,7 @@ def train(cfg):
         if main_process and micro_step == 10: 
             jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
         with jax.profiler.StepTraceAnnotation("train", step_num=micro_step):
-            loss = cached_train_step(batch)
+            weights, opt_state, loss = train_step(weights, opt_state, batch)
         if main_process and micro_step == 30:
             jax.profiler.stop_trace()
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")

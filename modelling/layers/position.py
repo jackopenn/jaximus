@@ -2,39 +2,22 @@ import jax
 from jax import numpy as jnp
 
 
-def apply_rope(
-    inputs: jax.Array,
-    positions: jax.Array,
-    *,
-    base_frequency: int,
-) -> jax.Array:
-  """Applies RoPE.
+def precompute_rope_embeddings(seq_len: int, head_dim: int, base: float, dtype: str):
+    dtype = getattr(jnp, dtype)
+    channel_range = jnp.arange(0, head_dim, 2, dtype=jnp.float32)
+    inv_freq = 1.0 / (base ** (channel_range / head_dim))
+    t = jnp.arange(seq_len, dtype=jnp.float32)
+    freqs = jnp.outer(t, inv_freq)
+    cos, sin = jnp.cos(freqs), jnp.sin(freqs)
+    cos, sin = cos.astype(dtype), sin.astype(dtype)
+    # Shape: [1, seq_len, 1, head_dim//2] for broadcasting with [B, L, N, H]
+    cos, sin = cos[None, :, None, :], sin[None, :, None, :]
+    return cos, sin
 
-  Let B denote batch size, L denote sequence length, N denote number of heads,
-  and H denote head dimension. Note that H must be divisible by 2.
 
-  Args:
-    inputs: Array of shape [B, L, N, H].
-    positions:  Array of shape [B, L].
-    base_frequency: Base frequency used to compute rotations.
-
-  Returns:
-    Array of shape [B, L, N, H].
-  """
-  head_dim = inputs.shape[-1]
-  fraction = 2 * jnp.arange(0, head_dim // 2) / head_dim
-  timescale = base_frequency**fraction
-
-  sinusoid_inp = (
-      positions[..., jnp.newaxis] / timescale[jnp.newaxis, jnp.newaxis, :]
-  )
-  sinusoid_inp = sinusoid_inp[..., jnp.newaxis, :]
-
-  sin = jnp.sin(sinusoid_inp)
-  cos = jnp.cos(sinusoid_inp)
-
-  first_half, second_half = jnp.split(inputs, 2, axis=-1)
-  first_part = first_half * cos - second_half * sin
-  second_part = second_half * cos + first_half * sin
-  out = jnp.concatenate([first_part, second_part], axis=-1)
-  return out.astype(inputs.dtype)
+def apply_rope(inputs: jax.Array, cos: jax.Array, sin: jax.Array) -> jax.Array:
+    H = inputs.shape[-1] // 2
+    x1, x2 = inputs[..., :H], inputs[..., H:]
+    y1 = x1 * cos - x2 * sin
+    y2 = x1 * sin + x2 * cos
+    return jnp.concatenate([y1, y2], axis=-1).astype(inputs.dtype)

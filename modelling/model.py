@@ -1,278 +1,463 @@
+from dataclasses import dataclass
+from functools import partial
+from typing import List, Optional, Union, Callable
+import warnings
+
 import jax
 from jax import numpy as jnp
-from flax import nnx
-from jax.sharding import auto_axes
-from modelling.layers.core import MLP, GLU, Attention, create_norm
+
+from modelling.layers.core import (
+    RMSNormWeights,
+    LayerNormWeights,
+    NormWeights,
+    MLPWeights,
+    GLUWeights,
+    AttentionWeights,
+    layer_norm,
+    attention,
+    mlp,
+    glu,
+    rms_norm,
+)
+from modelling.layers.position import precompute_rope_embeddings
 from modelling.layers.init import get_initializers
-from parallel import logical_to_physical, shard_init
+from parallel import logical_to_physical
 
 
-class Layer(nnx.Module):
-    def __init__(
-            self,
-            hidden_dim,
-            num_attention_heads,
-            num_key_value_heads,
-            head_dim,
-            intermediate_dim,
-            act_fn,
-            norm_type,
-            norm_position,
-            norm_epsilon,
-            mlp_type,
-            attn_use_bias,
-            mlp_use_bias,
-            rope_theta,
-            qk_norm,
-            qk_norm_type,
-            qk_norm_epsilon,
-            sliding_window,
-            dtype,
-            inits,
-            rngs,
-    ):
-        super().__init__()
-        self.norm_position = norm_position
-        
-        self.attention = Attention(
-            hidden_dim=hidden_dim,
-            num_attention_heads=num_attention_heads,
-            num_key_value_heads=num_key_value_heads,
-            head_dim=head_dim,
-            rope_theta=rope_theta,
-            qk_norm=qk_norm,
-            qk_norm_type=qk_norm_type,
-            qk_norm_epsilon=qk_norm_epsilon,
-            use_bias=attn_use_bias,
-            dtype=dtype,
-            sliding_window=sliding_window,
-            inits=inits,
-            rngs=rngs,
-        )
-        
-        self.ln_1 = create_norm(
-            norm_type=norm_type,
-            num_features=hidden_dim,
-            epsilon=norm_epsilon,
-            use_bias=attn_use_bias,
-            rngs=rngs,
-        )
-        
-        MLPFactory = MLP if mlp_type == "mlp" else GLU
-        self.mlp = MLPFactory(
-            hidden_dim=hidden_dim,
-            intermediate_dim=intermediate_dim,
-            act_fn=act_fn,
-            use_bias=mlp_use_bias,
-            dtype=dtype,
-            inits=inits,
-            rngs=rngs,
-        )
-        
-        self.ln_2 = create_norm(
-            norm_type=norm_type,
-            num_features=hidden_dim,
-            epsilon=norm_epsilon,
-            use_bias=mlp_use_bias,
-            rngs=rngs,
-        )
-
-    def __call__(self, x, mask=None):
-        if self.norm_position == "pre":
-            # x = x + self.attention(self.ln_1(x), mask=mask)
-            # x = x + self.mlp(self.ln_2(x))
-            
-            residual = x
-            with jax.named_scope("att_pre_norm"):
-                x = self.ln_1(x)
-            with jax.named_scope("att"):
-                x = self.attention(x, mask=mask)
-            with jax.named_scope("add_residual"):
-                x = x + residual
-            
-            residual = x
-            with jax.named_scope("mlp_pre_norm"):
-                x = self.ln_2(x)
-            with jax.named_scope("mlp"):
-                x = self.mlp(x)
-            with jax.named_scope("add_residual"):
-                x = x + residual
-                
-        else:  # post-norm
-            residual = x
-            with jax.named_scope("att"):
-                x = self.attention(x, mask=mask)
-            with jax.named_scope("att_post_norm"):
-                x = self.ln_1(x)
-            with jax.named_scope("add_residual"):
-                x = x + residual
-            residual = x
-            with jax.named_scope("mlp"):
-                x = self.mlp(x)
-            with jax.named_scope("mlp_post_norm"):
-                x = self.ln_2(x)
-            with jax.named_scope("add_residual"):
-                x = x + residual
-        return x
+@jax.tree_util.register_dataclass
+@dataclass
+class LayerWeights:
+    attention_weights: AttentionWeights
+    mlp_weights: Union[MLPWeights, GLUWeights]
+    att_norm: Optional[NormWeights]
+    mlp_norm: Optional[NormWeights]
 
 
-class Model(nnx.Module):
-    def __init__(
-        self,
-        vocab_size,
-        hidden_dim,
-        num_layers,
-        num_attention_heads,
-        num_key_value_heads,
-        head_dim,
-        intermediate_dim,
-        max_seq_len,
-        norm_type,
-        norm_position,
-        norm_epsilon,
-        mlp_type,
-        act_fn,
-        attn_use_bias,
-        mlp_use_bias,
-        lm_head_use_bias,
-        qk_norm,
-        qk_norm_type,
-        qk_norm_epsilon,
-        sliding_window,
-        position_embedding_type,
-        rope_theta,
-        tie_word_embeddings,
-        init_strategy,
-        softcap,
-        dtype,
-        post_embed_norm,
-        pre_lm_head_norm,
-        rngs,
-    ):
-        super().__init__()
+@jax.tree_util.register_dataclass
+@dataclass
+class ModelWeights:
+    embed: jax.Array
+    layer_weights: List[LayerWeights]
+    unembed: Optional[jax.Array]
+    pos_embed: Optional[jax.Array] = None
+    embed_norm: Optional[NormWeights] = None
+    lm_head_norm: Optional[NormWeights] = None
+    lm_head_bias: Optional[jax.Array] = None
 
-        self.hidden_dim = hidden_dim
-        self.position_embedding_type = position_embedding_type
-        self.tie_word_embeddings = tie_word_embeddings
-        self.softcap = softcap
-        self.pre_lm_head_norm = pre_lm_head_norm
 
-        # used to estimate model flops 
-        self.num_layers = num_layers
-        self.num_attention_heads = num_attention_heads
-        self.head_dim = head_dim
-        self.max_seq_len = max_seq_len
-        
-        dtype = getattr(jnp, dtype)
-        act_fn = (lambda x: jnp.square(jax.nn.relu(x))) if act_fn == "relu_squared" else getattr(jax.nn, act_fn)
-        inits = get_initializers(init_strategy, hidden_dim)
+@dataclass
+class ModelConfig:
+    vocab_size: int
+    hidden_dim: int
+    num_layers: int
+    num_attention_heads: int
+    num_key_value_heads: int
+    head_dim: int
+    intermediate_dim: int
+    max_seq_len: int
+    norm_type: str
+    norm_position: str
+    norm_epsilon: float
+    norm_scale: bool  # For RMSNorm: optional. For LayerNorm: always True (ignored)
+    norm_bias: bool   # For RMSNorm: always False (ignored). For LayerNorm: optional
+    mlp_type: str
+    act_fn: str
+    attn_use_bias: bool
+    mlp_use_bias: bool
+    lm_head_use_bias: bool
+    qk_norm: bool
+    qk_norm_type: Optional[str]
+    qk_norm_epsilon: Optional[float]
+    sliding_window: Optional[int]
+    position_embedding_type: str
+    rope_theta: Optional[float]
+    tie_word_embeddings: bool
+    softcap: Optional[float]
+    dtype: str
+    post_embed_norm: bool
+    pre_lm_head_norm: bool
+    init_strategy: str
 
-        self.token_embedding = nnx.Embed(
-            num_embeddings=vocab_size,
-            features=hidden_dim,
-            dtype=dtype,
-            embedding_init=shard_init(inits["embed"], ("model_vocab", "model_embed")),
-            rngs=rngs,
-        )
-        
-        self.post_embed_norm = post_embed_norm
-        if post_embed_norm:
-            self.embed_norm = create_norm(
-                norm_type=norm_type,
-                num_features=hidden_dim,
-                epsilon=norm_epsilon,
-                use_bias=False,
-                rngs=rngs,
-            )
-        
-        if position_embedding_type == "learned":
-            self.pos_embedding = nnx.Embed(
-                num_embeddings=max_seq_len,
-                features=hidden_dim,
-                dtype=dtype,
-                embedding_init=shard_init(inits["embed"], ("model_seq", "model_embed")),
-                rngs=rngs,
-            )
-        
-        self.layers = nnx.List([
-            Layer(
-                hidden_dim=hidden_dim,
-                num_attention_heads=num_attention_heads,
-                num_key_value_heads=num_key_value_heads,
-                head_dim=head_dim,
-                intermediate_dim=intermediate_dim,
-                act_fn=act_fn,
-                norm_type=norm_type,
-                norm_position=norm_position,
-                norm_epsilon=norm_epsilon,
-                mlp_type=mlp_type,
-                attn_use_bias=attn_use_bias,
-                mlp_use_bias=mlp_use_bias,
-                rope_theta=rope_theta if position_embedding_type == "rope" else None,
-                qk_norm=qk_norm,
-                qk_norm_type=qk_norm_type,
-                qk_norm_epsilon=qk_norm_epsilon if qk_norm else None,
-                sliding_window=sliding_window,
-                dtype=dtype,
-                inits=inits,
-                rngs=rngs,
-            )
-            for _ in range(num_layers)
-        ])
-        
-        if pre_lm_head_norm:
-            self.ln_f = create_norm(
-                norm_type=norm_type,
-                num_features=hidden_dim,
-                epsilon=norm_epsilon,
-                use_bias=attn_use_bias,
-                rngs=rngs,
-            )
-        
-        if not tie_word_embeddings:
-            self.lm_head = nnx.Linear(
-                in_features=hidden_dim,
-                out_features=vocab_size,
-                use_bias=lm_head_use_bias,
-                kernel_init=shard_init(inits["lm_head"], ("model_embed", "model_vocab")),
-                bias_init=shard_init(inits["bias"], ("model_vocab", )),
-                dtype=dtype,
-                rngs=rngs,
-            )
 
-    # TODO: tmp since embeddings don't suppoer explicit sharding yet ...
-    @auto_axes
-    def _token_embedding(self, x):
-        return self.token_embedding(x)
+VALID_NORM_TYPES = ("rms", "layer")
+VALID_INIT_STRATEGIES = ("default", "nanochat")
+VALID_MLP_TYPES = ("mlp", "glu")
+VALID_POSITION_EMBEDDING_TYPES = ("learned", "rope", "none")
+
+
+def make_config(cfg_dict: dict) -> ModelConfig:
     
-    @auto_axes
-    def _pos_embedding(self, x):
-        return self.pos_embedding(x)
+    # Valid value checks
+    if cfg_dict["norm_type"] not in VALID_NORM_TYPES:
+        raise ValueError(f"norm_type must be one of {VALID_NORM_TYPES}, got: {cfg_dict['norm_type']}")
+    if cfg_dict["init_strategy"] not in VALID_INIT_STRATEGIES:
+        raise ValueError(f"init_strategy must be one of {VALID_INIT_STRATEGIES}, got: {cfg_dict['init_strategy']}")
+    if cfg_dict["mlp_type"] not in VALID_MLP_TYPES:
+        raise ValueError(f"mlp_type must be one of {VALID_MLP_TYPES}, got: {cfg_dict['mlp_type']}")
+    if cfg_dict["position_embedding_type"] not in VALID_POSITION_EMBEDDING_TYPES:
+        raise ValueError(f"position_embedding_type must be one of {VALID_POSITION_EMBEDDING_TYPES}, got: {cfg_dict['position_embedding_type']}")
+    if cfg_dict["qk_norm_type"] is not None and cfg_dict["qk_norm_type"] not in VALID_NORM_TYPES:
+        raise ValueError(f"qk_norm_type must be one of {VALID_NORM_TYPES}, got: {cfg_dict['qk_norm_type']}")
+    
+    # Required parameter checks
+    if cfg_dict["position_embedding_type"] == "rope" and cfg_dict["rope_theta"] is None:
+        raise ValueError("rope_theta required when position_embedding_type='rope'")
+    if cfg_dict["qk_norm"] and cfg_dict["qk_norm_type"] is None:
+        raise ValueError("qk_norm_type required when qk_norm=True")
+    if cfg_dict["qk_norm"] and cfg_dict["qk_norm_epsilon"] is None:
+        raise ValueError("qk_norm_epsilon required when qk_norm=True")
+    
+    # Consistency checks
+    if cfg_dict["num_attention_heads"] % cfg_dict["num_key_value_heads"] != 0:
+        raise ValueError(f"num_attention_heads ({cfg_dict['num_attention_heads']}) must be divisible by num_key_value_heads ({cfg_dict['num_key_value_heads']})")
+    if cfg_dict["sliding_window"] is not None and cfg_dict["sliding_window"] < 0:
+        raise ValueError(f"sliding_window must be positive or None, got: {cfg_dict['sliding_window']}")
+    
+    # Handle conflicting parameters (warn and override)
+    rope_theta = cfg_dict["rope_theta"]
+    qk_norm_type = cfg_dict["qk_norm_type"]
+    qk_norm_epsilon = cfg_dict["qk_norm_epsilon"]
+    lm_head_use_bias = cfg_dict["lm_head_use_bias"]
+    
+    if cfg_dict["position_embedding_type"] != "rope" and rope_theta is not None:
+        warnings.warn(f"rope_theta={rope_theta} ignored because position_embedding_type='{cfg_dict['position_embedding_type']}'")
+        rope_theta = None
+    if not cfg_dict["qk_norm"] and qk_norm_type is not None:
+        warnings.warn(f"qk_norm_type='{qk_norm_type}' ignored because qk_norm=False")
+        qk_norm_type = None
+    if not cfg_dict["qk_norm"] and qk_norm_epsilon is not None:
+        warnings.warn(f"qk_norm_epsilon={qk_norm_epsilon} ignored because qk_norm=False")
+        qk_norm_epsilon = None
+    if cfg_dict["tie_word_embeddings"] and lm_head_use_bias:
+        warnings.warn("lm_head_use_bias=True ignored because tie_word_embeddings=True")
+        lm_head_use_bias = False
+    
+    return ModelConfig(
+        vocab_size=cfg_dict["vocab_size"],
+        hidden_dim=cfg_dict["hidden_dim"],
+        num_layers=cfg_dict["num_layers"],
+        num_attention_heads=cfg_dict["num_attention_heads"],
+        num_key_value_heads=cfg_dict["num_key_value_heads"],
+        head_dim=cfg_dict["head_dim"],
+        intermediate_dim=cfg_dict["intermediate_dim"],
+        max_seq_len=cfg_dict["max_seq_len"],
+        norm_type=cfg_dict["norm_type"],
+        norm_position=cfg_dict["norm_position"],
+        norm_epsilon=cfg_dict["norm_epsilon"],
+        norm_scale=cfg_dict["norm_scale"],
+        norm_bias=cfg_dict["norm_bias"],
+        mlp_type=cfg_dict["mlp_type"],
+        act_fn=cfg_dict["act_fn"],
+        attn_use_bias=cfg_dict["attn_use_bias"],
+        mlp_use_bias=cfg_dict["mlp_use_bias"],
+        lm_head_use_bias=lm_head_use_bias,
+        qk_norm=cfg_dict["qk_norm"],
+        qk_norm_type=qk_norm_type,
+        qk_norm_epsilon=qk_norm_epsilon,
+        sliding_window=cfg_dict["sliding_window"],
+        position_embedding_type=cfg_dict["position_embedding_type"],
+        rope_theta=rope_theta,
+        tie_word_embeddings=cfg_dict["tie_word_embeddings"],
+        softcap=cfg_dict["softcap"],
+        dtype=cfg_dict["dtype"],
+        post_embed_norm=cfg_dict["post_embed_norm"],
+        pre_lm_head_norm=cfg_dict["pre_lm_head_norm"],
+        init_strategy=cfg_dict["init_strategy"],
+    )
 
-    def __call__(self, x, mask=None):
-        with jax.named_scope("token_embedding"):
-            x = self._token_embedding(x, out_sharding=logical_to_physical(("batch", "act_seq", "act_embed")))
 
-        if self.position_embedding_type == "learned":
-            with jax.named_scope("pos_embedding"):
-                x = x + self._pos_embedding(jnp.arange(x.shape[1]), out_sharding=logical_to_physical(("act_seq", "act_embed")))
+def resolve_act_fn(act_fn_name: str) -> Callable:
+    if act_fn_name == "relu_squared":
+        return lambda x: jnp.square(jax.nn.relu(x))
+    return getattr(jax.nn, act_fn_name)
 
-        if self.post_embed_norm:
-            with jax.named_scope("embed_norm"):
-                x = self.embed_norm(x)
 
-        for idx, layer in enumerate(self.layers):
-            with jax.named_scope(f"layer_{idx}"):
-                x = layer(x, mask)
+def forward(
+    x: jax.Array,
+    weights: ModelWeights,
+    config: ModelConfig,
+    rope_cos: Optional[jax.Array] = None,
+    rope_sin: Optional[jax.Array] = None,
+    mask: Optional[jax.Array] = None,
+    debug: bool = False,
+) -> jax.Array:
+    dtype = getattr(jnp, config.dtype)
+
+    norm_factory = partial(
+        rms_norm if config.norm_type == "rms" else layer_norm,
+        eps=config.norm_epsilon,
+    )
+    
+    if debug:
+        jax.debug.print("input x type: {}", jax.typeof(x))
+    
+    with jax.named_scope("token_embedding"):
+        x = weights.embed.at[x].get(
+            out_sharding=logical_to_physical(("batch", "act_seq", "act_embed"))
+        ).astype(dtype)
+    
+    if debug:
+        jax.debug.print("after embed x type: {}", jax.typeof(x))
+    
+    if config.position_embedding_type == "learned" and weights.pos_embed is not None:
+        with jax.named_scope("pos_embedding"):
+            seq_len = x.shape[1]
+            pos_emb = weights.pos_embed[:seq_len].astype(dtype)
+            x = x + pos_emb[None, :, :]
+    
+    if config.post_embed_norm:
+        with jax.named_scope("embed_norm"):
+            x = norm_factory(x, weights.embed_norm)
+
+    attention_factory = partial(attention,
+        rope_cos=rope_cos,
+        rope_sin=rope_sin,
+        qk_norm=config.qk_norm,
+        qk_norm_type=config.qk_norm_type,
+        qk_norm_epsilon=config.qk_norm_epsilon,
+        sliding_window=config.sliding_window,
+        dtype=config.dtype)
+    
+    mlp_factory = partial(
+        mlp if config.mlp_type == "mlp" else glu,
+        act_fn=config.act_fn,
+        dtype=config.dtype,
+    )
+    
+    for idx, layer_weights in enumerate(weights.layer_weights):
+        with jax.named_scope(f"layer_{idx}"):
+            if config.norm_position == "pre":
+                residual = x
+                with jax.named_scope("att_pre_norm"):
+                    x = norm_factory(x, layer_weights.att_norm)
+                with jax.named_scope("att"):
+                    x = attention_factory(
+                        x, layer_weights.attention_weights,
+                        mask=mask,
+                    )
+                with jax.named_scope("add_residual"):
+                    x = x + residual
+                residual = x
+                with jax.named_scope("mlp_pre_norm"):
+                    x = norm_factory(x, layer_weights.mlp_norm)
+                with jax.named_scope("mlp"):
+                    x = mlp_factory(x, layer_weights.mlp_weights)
+                with jax.named_scope("add_residual"):
+                    x = x + residual
+            else:
+                residual = x
+                with jax.named_scope("att"):
+                    x = attention_factory(
+                        x, layer_weights.attention_weights,
+                        mask=mask,
+                    )
+                with jax.named_scope("att_post_norm"):
+                    x = norm_factory(x, layer_weights.att_norm)
+                with jax.named_scope("add_residual"):
+                    x = x + residual
+                residual = x
+                with jax.named_scope("mlp"):
+                    x = mlp_factory(x, layer_weights.mlp_weights)
+                with jax.named_scope("mlp_post_norm"):
+                    x = norm_factory(x, layer_weights.mlp_norm)
+                with jax.named_scope("add_residual"):
+                    x = x + residual
+    
+    if config.pre_lm_head_norm:
+        with jax.named_scope("lm_head_norm"):
+            x = norm_factory(x, weights.lm_head_norm)
+    
+    with jax.named_scope("lm_head"):
+        if config.tie_word_embeddings:
+            logits = jnp.matmul(
+                x, weights.embed.T.astype(dtype),
+                out_sharding=logical_to_physical(("batch", "act_seq", "act_vocab"))
+            )
+        else:
+            logits = jnp.matmul(
+                x, weights.unembed.astype(dtype),
+                out_sharding=logical_to_physical(("batch", "act_seq", "act_vocab"))
+            )
+            if weights.lm_head_bias is not None:
+                logits = logits + weights.lm_head_bias.astype(dtype)
+    
+    if config.softcap is not None:
+        with jax.named_scope("softcap"):
+            logits = config.softcap * jnp.tanh(logits.astype(jnp.float32) / config.softcap)
+    
+    return logits
+
+
+def init_model_weights(
+    config: ModelConfig,
+    key: jax.random.PRNGKey,
+) -> ModelWeights:
+    inits = get_initializers(config.init_strategy, config.hidden_dim)
+    # Worst case: embed + pos_embed + unembed + lm_head_bias + num_layers * (4 qkvo + 4 bias + 3 glu + 3 glu_bias)
+    num_keys = 4 + config.num_layers * 14
+    keys = iter(jax.random.split(key, num_keys))
+    
+    def init_norm_weights(norm_type, num_features, use_scale, use_bias, logical_axes):
+        # RMSNorm: scale is optional (use_scale), never has bias
+        # LayerNorm: always has scale, bias is optional (use_bias)
+        if norm_type == "rms":
+            scale = jnp.ones((num_features,), dtype=jnp.float32, out_sharding=logical_to_physical(logical_axes)) if use_scale else None
+            return RMSNormWeights(scale=scale)
+        else:
+            scale = jnp.ones((num_features,), dtype=jnp.float32, out_sharding=logical_to_physical(logical_axes))
+            bias = jnp.zeros((num_features,), dtype=jnp.float32, out_sharding=logical_to_physical(logical_axes)) if use_bias else None
+            return LayerNormWeights(scale=scale, bias=bias)
+    
+    embed = inits["embed"](
+        next(keys), (config.vocab_size, config.hidden_dim), dtype=jnp.float32,
+        out_sharding=logical_to_physical(("model_vocab", "model_embed"))
+    )
+    
+    pos_embed = None
+    if config.position_embedding_type == "learned":
+        pos_embed = inits["embed"](
+            next(keys), (config.max_seq_len, config.hidden_dim), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_seq", "model_embed"))
+        )
+    
+    embed_norm = None
+    if config.post_embed_norm:
+        embed_norm = init_norm_weights(config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("model_embed",))
+    
+    layer_weights_list = []
+    for _ in range(config.num_layers):
+        q_proj = inits["qkv"](
+            next(keys), (config.hidden_dim, config.num_attention_heads, config.head_dim), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_embed", "model_q", "head_embed"))
+        )
+        k_proj = inits["qkv"](
+            next(keys), (config.hidden_dim, config.num_key_value_heads, config.head_dim), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_embed", "model_kv", "head_embed"))
+        )
+        v_proj = inits["qkv"](
+            next(keys), (config.hidden_dim, config.num_key_value_heads, config.head_dim), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_embed", "model_kv", "head_embed"))
+        )
+        o_proj = inits["o_proj"](
+            next(keys), (config.num_attention_heads, config.head_dim, config.hidden_dim), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_q", "head_embed", "model_embed"))
+        )
         
-        if self.pre_lm_head_norm:
-            with jax.named_scope("ln_f"):
-                x = self.ln_f(x)
-        with jax.named_scope("lm_head"):
-            logits = self.lm_head(x, out_sharding=logical_to_physical(("batch", "act_seq", "act_vocab"))) if self.lm_head else self.token_embedding.attend(x)
-
-        if self.softcap:
-            with jax.named_scope("softcap"):
-                logits = self.softcap * jnp.tanh(logits.astype(jnp.float32) / self.softcap)
-            
-        return logits
+        q_bias = k_bias = v_bias = o_bias = None
+        if config.attn_use_bias:
+            q_bias = inits["bias"](
+                next(keys), (config.num_attention_heads, config.head_dim), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_q", "head_embed"))
+            )
+            k_bias = inits["bias"](
+                next(keys), (config.num_key_value_heads, config.head_dim), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_kv", "head_embed"))
+            )
+            v_bias = inits["bias"](
+                next(keys), (config.num_key_value_heads, config.head_dim), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_kv", "head_embed"))
+            )
+            o_bias = inits["bias"](
+                next(keys), (config.hidden_dim,), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_embed",))
+            )
+        
+        q_norm = k_norm = None
+        if config.qk_norm:
+            q_norm = init_norm_weights(config.qk_norm_type, config.head_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("head_embed",))
+            k_norm = init_norm_weights(config.qk_norm_type, config.head_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("head_embed",))
+        
+        attention_weights = AttentionWeights(
+            q_proj=q_proj, k_proj=k_proj, v_proj=v_proj, o_proj=o_proj,
+            q_bias=q_bias, k_bias=k_bias, v_bias=v_bias, o_bias=o_bias,
+            q_norm=q_norm, k_norm=k_norm,
+        )
+        
+        if config.mlp_type == "mlp":
+            up_proj = inits["mlp_up"](
+                next(keys), (config.hidden_dim, config.intermediate_dim), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_embed", "model_intermediate"))
+            )
+            down_proj = inits["mlp_down"](
+                next(keys), (config.intermediate_dim, config.hidden_dim), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_intermediate", "model_embed"))
+            )
+            up_bias = down_bias = None
+            if config.mlp_use_bias:
+                up_bias = inits["bias"](
+                    next(keys), (config.intermediate_dim,), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_intermediate",))
+                )
+                down_bias = inits["bias"](
+                    next(keys), (config.hidden_dim,), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_embed",))
+                )
+            mlp_weights = MLPWeights(up_proj=up_proj, down_proj=down_proj, up_bias=up_bias, down_bias=down_bias)
+        else:
+            gate_proj = inits["mlp_up"](
+                next(keys), (config.hidden_dim, config.intermediate_dim), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_embed", "model_intermediate"))
+            )
+            up_proj = inits["mlp_up"](
+                next(keys), (config.hidden_dim, config.intermediate_dim), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_embed", "model_intermediate"))
+            )
+            down_proj = inits["mlp_down"](
+                next(keys), (config.intermediate_dim, config.hidden_dim), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_intermediate", "model_embed"))
+            )
+            gate_bias = up_bias = down_bias = None
+            if config.mlp_use_bias:
+                gate_bias = inits["bias"](
+                    next(keys), (config.intermediate_dim,), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_intermediate",))
+                )
+                up_bias = inits["bias"](
+                    next(keys), (config.intermediate_dim,), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_intermediate",))
+                )
+                down_bias = inits["bias"](
+                    next(keys), (config.hidden_dim,), dtype=jnp.float32,
+                    out_sharding=logical_to_physical(("model_embed",))
+                )
+            mlp_weights = GLUWeights(
+                gate_proj=gate_proj, up_proj=up_proj, down_proj=down_proj,
+                gate_bias=gate_bias, up_bias=up_bias, down_bias=down_bias,
+            )
+        
+        att_norm = init_norm_weights(config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("model_embed",))
+        mlp_norm = init_norm_weights(config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("model_embed",))
+        
+        layer_weights_list.append(LayerWeights(
+            attention_weights=attention_weights,
+            mlp_weights=mlp_weights,
+            att_norm=att_norm,
+            mlp_norm=mlp_norm,
+        ))
+    
+    lm_head_norm = None
+    if config.pre_lm_head_norm:
+        lm_head_norm = init_norm_weights(config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("model_embed",))
+    
+    unembed = None
+    lm_head_bias = None
+    if not config.tie_word_embeddings:
+        unembed = inits["lm_head"](
+            next(keys), (config.hidden_dim, config.vocab_size), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_embed", "model_vocab"))
+        )
+        if config.lm_head_use_bias:
+            lm_head_bias = inits["bias"](
+                next(keys), (config.vocab_size,), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_vocab",))
+            )
+    
+    return ModelWeights(
+        embed=embed,
+        layer_weights=layer_weights_list,
+        unembed=unembed,
+        pos_embed=pos_embed,
+        embed_norm=embed_norm,
+        lm_head_norm=lm_head_norm,
+        lm_head_bias=lm_head_bias,
+    )

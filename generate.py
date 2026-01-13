@@ -1,56 +1,65 @@
 from functools import partial
 import jax
 from jax import numpy as jnp
+from jax.sharding import PartitionSpec as P
 import numpy as np
-from flax import nnx
 
 from parallel import logical_to_physical
+from modelling.model import forward, ModelWeights, ModelConfig
+from modelling.layers.position import precompute_rope_embeddings
 
-@nnx.jit(static_argnums=(2, 3, 4, 5))
-def _sample_batch(model, tokens, prompt_len, gen_len, top_k, temperature, key):
-    """
-    Autoregressive sampling for a batch. All prompts must have same length.
+
+def _make_sample_batch(model_config: ModelConfig, rope_cos, rope_sin):
+    """Create a JIT-compiled sampling function for the given config."""
     
-    Args:
-        model: nnx model
-        tokens: [batch, seq_len] token ids
-        prompt_len: static int, length of all prompts
-        gen_len: static int, tokens to generate
-        top_k: static int
-        temperature: static float
-        key: PRNGKey
+    @partial(jax.jit, static_argnums=(2, 3, 4, 5))
+    def _sample_batch(weights, tokens, prompt_len, gen_len, top_k, temperature, key):
+        """
+        Autoregressive sampling for a batch. All prompts must have same length.
+        
+        Args:
+            weights: ModelWeights
+            tokens: [batch, seq_len] token ids
+            prompt_len: static int, length of all prompts
+            gen_len: static int, tokens to generate
+            top_k: static int
+            temperature: static float
+            key: PRNGKey
+        
+        Returns:
+            tokens: [batch, seq_len] with generated tokens
+        """
+        def body_fn(i, carry):
+            tokens, pos, key = carry
+            key, subkey = jax.random.split(key)
+            
+            logits = forward(tokens, weights, model_config, rope_cos=rope_cos, rope_sin=rope_sin)
+            logits = logits[:, pos, :].astype(jnp.float32) / temperature
+            
+            # Top-k filtering
+            top_values, _ = jax.lax.top_k(logits, k=top_k)
+            threshold = top_values[:, -1:]
+            logits = jnp.where(logits < threshold, -jnp.inf, logits)
+            
+            # Sample
+            next_token = jax.random.categorical(subkey, logits)
+            
+            # Update
+            pos = pos + 1
+            tokens = tokens.at[:, pos].set(next_token)
+            
+            return tokens, pos, key
+        
+        pos = prompt_len - 1
+        tokens, _, _ = jax.lax.fori_loop(0, gen_len, body_fn, (tokens, pos, key))
+        return tokens
     
-    Returns:
-        tokens: [batch, seq_len] with generated tokens
-    """
-    def body_fn(i, carry):
-        tokens, pos, key = carry
-        key, subkey = jax.random.split(key)
-        
-        logits = model(tokens)
-        logits = logits[:, pos, :].astype(jnp.float32) / temperature
-        
-        # Top-k filtering
-        top_values, _ = jax.lax.top_k(logits, k=top_k)
-        threshold = top_values[:, -1:]
-        logits = jnp.where(logits < threshold, -jnp.inf, logits)
-        
-        # Sample
-        next_token = jax.random.categorical(subkey, logits)
-        
-        # Update
-        pos = pos + 1
-        tokens = tokens.at[:, pos].set(next_token)
-        
-        return tokens, pos, key
-    
-    pos = prompt_len - 1
-    tokens, _, _ = jax.lax.fori_loop(0, gen_len, body_fn, (tokens, pos, key))
-    return tokens
+    return _sample_batch
 
 
 def generate(
-    model,
+    weights: ModelWeights,
+    model_config: ModelConfig,
     tokenizer,
     prompts: list[str] = None,
     max_length: int = 64,
@@ -65,6 +74,20 @@ def generate(
     For multi-host: ALL processes must call this. Returns results only on main process.
     
     Note: All prompts are padded to same length for efficient batched generation.
+    
+    Args:
+        weights: ModelWeights for the model
+        model_config: ModelConfig for the model
+        tokenizer: HuggingFace tokenizer
+        prompts: List of prompt strings (uses defaults if None)
+        max_length: Maximum total sequence length
+        n_samples: Number of samples per prompt
+        top_k: Top-k sampling parameter
+        temperature: Sampling temperature
+        seed: Random seed
+    
+    Returns:
+        Dict mapping prompts to lists of generated samples (None on non-main processes)
     """
     if prompts is None:
         prompts = [
@@ -78,7 +101,6 @@ def generate(
         ]
     
     n_devices = jax.device_count()  # total devices across all hosts
-    n_local_devices = jax.local_device_count()  # devices on this host
     process_idx = jax.process_index()
     main_process = process_idx == 0
     
@@ -146,10 +168,20 @@ def generate(
         local_indices
     )
     
-    # Generate with cached model
+    # Precompute RoPE embeddings (if using RoPE)
+    rope_cos, rope_sin = None, None
+    if model_config.position_embedding_type == "rope":
+        dtype = getattr(jnp, model_config.dtype)
+        rope_cos, rope_sin = precompute_rope_embeddings(
+            model_config.max_seq_len, model_config.head_dim, model_config.rope_theta, dtype=dtype
+        )
+        rope_cos = jax.lax.with_sharding_constraint(rope_cos, P())
+        rope_sin = jax.lax.with_sharding_constraint(rope_sin, P())
+
+    # Create and call sampling function
     key = jax.random.PRNGKey(seed)
-    sample_fn = nnx.cached_partial(_sample_batch, model)
-    generated = sample_fn(tokens, max_prompt_len, gen_len, top_k, temperature, key)
+    sample_fn = _make_sample_batch(model_config, rope_cos, rope_sin)
+    generated = sample_fn(weights, tokens, max_prompt_len, gen_len, top_k, temperature, key)
     
     # Gather from all hosts
     all_generated = jax.experimental.multihost_utils.process_allgather(generated, tiled=True)
@@ -175,4 +207,4 @@ def generate(
 
 
 if __name__ == "__main__":
-    print("Usage: import generate and call generate(model, tokenizer)")
+    print("Usage: import generate and call generate(weights, model_config, tokenizer)")
