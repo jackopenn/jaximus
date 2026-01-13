@@ -79,18 +79,21 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights):
     return train_step, input_sharding
 
 def train(cfg):
-    wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
-    print(cfg.to_dict())
+    main_process = jax.process_index() == 0
+    if main_process:
+        wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
+        print(cfg.to_dict())
 
     # init mesh
     mesh = jax.make_mesh((cfg.parallel.data, ), ("data", ), (AxisType.Explicit,))
     jax.set_mesh(mesh)
-    main_process = jax.process_index() == 0
     if main_process:
         print(f"{mesh=}")
 
     # init tokenizer
     tokenizer = AutoTokenizer.from_pretrained(cfg.data.tokenizer_name)
+    if main_process:
+        print(tokenizer)
 
     # init dataset
     dataset = get_hf_dataset(
@@ -101,16 +104,21 @@ def train(cfg):
         streaming=True,
         num_proc=None,
     )
+    if main_process:
+        print(dataset)
 
     # set sharding strategy and init model 
     set_sharding_strategy(cfg.parallel.strategy)
     model_config = make_config(cfg.model.to_dict())
     key = jax.random.PRNGKey(cfg.seed)
     model_weights = init_model_weights(model_config, key)
-    
+    if main_process:
+        print(model_weights)
     # init optimizer
     tx, schedule_fns = make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
+    if main_process:
+        print(opt_weights)
     
     if main_process:
         # print model stats
