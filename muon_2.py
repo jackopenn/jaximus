@@ -99,10 +99,19 @@ def _orthogonalize_layer_sharded_inner(
     ns_steps: int,
     eps: float,
     mesh_axis: str,
+    sharded_axis: int,  # 1 for P-sharded, 2 for Q-sharded (after batch dim)
 ) -> jax.Array:
     """Inner function for layer-sharded orthogonalization (runs inside shard_map).
     
     This function is called from within shard_map where the mesh axis is bound.
+    
+    Args:
+        x: 3D tensor (L, P, Q)
+        ns_coeffs: Newton-Schulz coefficients
+        ns_steps: Number of NS iterations
+        eps: Numerical stability constant
+        mesh_axis: Name of mesh axis for collectives
+        sharded_axis: Which axis is sharded (1 for P, 2 for Q)
     """
     L, P, Q = x.shape
     
@@ -111,16 +120,17 @@ def _orthogonalize_layer_sharded_inner(
     if transposed:
         x = jnp.swapaxes(x, -2, -1)  # (L, Q, P)
         P, Q = Q, P
+        # Adjust sharded_axis after transpose
+        sharded_axis = 3 - sharded_axis  # 1 <-> 2
     
     # Normalize each matrix to ensure spectral norm <= 1
     # Compute Frobenius norm per matrix
     norms = jnp.linalg.norm(x, axis=(-2, -1), keepdims=True)
     x = x / (norms + eps)
     
-    # All-to-all: reshard from P-sharding to L-sharding
-    # (L, P/S, Q) -> (L/S, P, Q)
-    # split_axis=1 splits along P, concat_axis=0 concatenates along L
-    x = jax.lax.all_to_all(x, mesh_axis, split_axis=1, concat_axis=0, tiled=True)
+    # All-to-all: reshard from FSDP sharding to L-sharding
+    # split_axis is the sharded axis, concat_axis=0 (L dimension)
+    x = jax.lax.all_to_all(x, mesh_axis, split_axis=sharded_axis, concat_axis=0, tiled=True)
     
     # Newton-Schulz iterations (now fully local compute on each device)
     ns_coeffs = ns_coeffs.astype(x.dtype)
@@ -131,10 +141,9 @@ def _orthogonalize_layer_sharded_inner(
         unroll=True
     )
     
-    # All-to-all: reshard back from L-sharding to P-sharding
-    # (L/S, P, Q) -> (L, P/S, Q)
-    # split_axis=0 splits along L, concat_axis=1 concatenates along P
-    x = jax.lax.all_to_all(x, mesh_axis, split_axis=0, concat_axis=1, tiled=True)
+    # All-to-all: reshard back from L-sharding to original FSDP sharding
+    # split_axis=0 (L dimension), concat_axis is the original sharded axis
+    x = jax.lax.all_to_all(x, mesh_axis, split_axis=0, concat_axis=sharded_axis, tiled=True)
     
     if transposed:
         x = jnp.swapaxes(x, -2, -1)  # (L, P, Q)
@@ -183,16 +192,24 @@ def orthogonalize_layer_sharded(
     eps: float = 1e-8,
     mesh: Optional[Mesh] = None,
     mesh_axis: str = "data",
+    sharded_axis: int = 1,  # 1 for P-sharded (axis 1), 2 for Q-sharded (axis 2)
 ) -> jax.Array:
     """Orthogonalize batched matrices using layer sharding strategy.
     
-    This function uses shard_map to reshard from FSDP's P-sharding to layer-sharding
+    This function uses shard_map to reshard from FSDP sharding to layer-sharding
     using all-to-all, performs Newton-Schulz iterations locally, then reshards back.
     
-    Input sharding: (L, P/S, Q) - P dimension sharded across S devices
-    After first all-to-all: (L/S, P, Q) - L dimension sharded, P is full
-    After NS iterations: (L/S, P, Q)
-    After second all-to-all: (L, P/S, Q) - back to original sharding
+    For P-sharded input (sharded_axis=1):
+        Input sharding: (L, P/S, Q) - P dimension sharded across S devices
+        After first all-to-all: (L/S, P, Q) - L dimension sharded, P is full
+        After NS iterations: (L/S, P, Q)
+        After second all-to-all: (L, P/S, Q) - back to original sharding
+    
+    For Q-sharded input (sharded_axis=2):
+        Input sharding: (L, P, Q/S) - Q dimension sharded across S devices
+        After first all-to-all: (L/S, P, Q) - L dimension sharded, Q is full
+        After NS iterations: (L/S, P, Q)
+        After second all-to-all: (L, P, Q/S) - back to original sharding
     
     On single-device or when mesh is None, falls back to batched orthogonalization
     without all-to-all.
@@ -205,6 +222,7 @@ def orthogonalize_layer_sharded(
         mesh: JAX Mesh for distributed computation. If None, uses batched computation
               without all-to-all.
         mesh_axis: Name of the mesh axis for all-to-all communication
+        sharded_axis: Which axis is sharded (1 for P, 2 for Q). Default is 1.
         
     Returns:
         Orthogonalized tensor with same shape as input
@@ -213,13 +231,20 @@ def orthogonalize_layer_sharded(
     if mesh is None or jax.device_count() == 1:
         return _orthogonalize_batched_no_alltoall(x, ns_coeffs, ns_steps, eps)
     
+    # Build partition specs based on which axis is sharded
+    if sharded_axis == 1:
+        in_spec = P(None, mesh_axis, None)   # (L, P/S, Q) - P sharded
+        out_spec = P(None, mesh_axis, None)  # (L, P/S, Q) - P sharded
+    else:  # sharded_axis == 2
+        in_spec = P(None, None, mesh_axis)   # (L, P, Q/S) - Q sharded
+        out_spec = P(None, None, mesh_axis)  # (L, P, Q/S) - Q sharded
+    
     # Use shard_map to properly bind the mesh axis for all_to_all
-    # Input is sharded on P dimension (axis 1), output same sharding
     sharded_fn = shard_map(
-        lambda x: _orthogonalize_layer_sharded_inner(x, ns_coeffs, ns_steps, eps, mesh_axis),
+        lambda x: _orthogonalize_layer_sharded_inner(x, ns_coeffs, ns_steps, eps, mesh_axis, sharded_axis),
         mesh=mesh,
-        in_specs=(P(None, mesh_axis, None),),  # (L, P/S, Q) - P sharded
-        out_specs=P(None, mesh_axis, None),     # (L, P/S, Q) - P sharded
+        in_specs=(in_spec,),
+        out_specs=out_spec,
         check_rep=False,  # Allow replicated intermediates
     )
     
@@ -246,18 +271,36 @@ def _reconstruct_tree(flat_values: List[jax.Array], paths: List[Any], tree_struc
     return jax.tree_util.tree_unflatten(tree_struct, leaves)
 
 
+def _get_sharding_key(arr: jax.Array) -> Optional[Tuple]:
+    """Get a hashable key representing the array's sharding.
+    
+    Returns None for unsharded arrays, or a tuple of the PartitionSpec for sharded arrays.
+    """
+    try:
+        sharding = arr.sharding
+        if hasattr(sharding, 'spec'):
+            # NamedSharding has a spec attribute
+            return tuple(sharding.spec)
+        return None
+    except (AttributeError, ValueError):
+        return None
+
+
 def batch_params_by_shape(
     params: base.Updates
-) -> Tuple[Dict[Tuple[int, int], jax.Array], Dict[Tuple[int, int], List[Any]], List[Any], Any]:
-    """Group parameters by shape and stack them along a layer axis.
+) -> Tuple[Dict[Any, jax.Array], Dict[Any, List[Any]], List[Any], Any]:
+    """Group parameters by shape AND sharding, then stack them along a layer axis.
+    
+    Parameters with the same shape but different shardings are grouped separately
+    to avoid JAX's sharding mismatch errors during stacking.
     
     Args:
         params: Parameter tree (typically momentum values)
         
     Returns:
         Tuple of:
-        - batched: Dict mapping (P, Q) shape to stacked tensor of shape (L, P, Q)
-        - shape_to_paths: Dict mapping (P, Q) shape to list of tree paths
+        - batched: Dict mapping (shape, sharding_key) to stacked tensor of shape (L, P, Q)
+        - shape_to_paths: Dict mapping (shape, sharding_key) to list of tree paths
         - original_paths: List of paths in original tree traversal order
         - tree_struct: Tree structure for reconstruction
     """
@@ -266,15 +309,15 @@ def batch_params_by_shape(
     # Save original path order for reconstruction
     original_paths = [path for path, _ in flat_with_paths]
     
-    # Group by shape
-    shape_groups: Dict[Tuple[int, int], List[Tuple[Any, jax.Array]]] = {}
+    # Group by shape AND sharding
+    shape_groups: Dict[Any, List[Tuple[Any, jax.Array]]] = {}
     for path, arr in flat_with_paths:
         if arr.ndim != 2:
-            # Non-2D arrays get their own "group" with shape (1, *original_shape)
-            # We'll handle them separately
-            key = ("non2d", arr.shape)
+            # Non-2D arrays get their own "group"
+            key = ("non2d", arr.shape, _get_sharding_key(arr))
         else:
-            key = arr.shape
+            # 2D arrays: group by (shape, sharding)
+            key = (arr.shape, _get_sharding_key(arr))
         
         if key not in shape_groups:
             shape_groups[key] = []
@@ -428,6 +471,31 @@ def scale_by_muon(
     return base.GradientTransformation(init_fn, update_fn)
 
 
+def _get_sharded_axis_from_key(shape_key: Any, mesh_axis: str) -> int:
+    """Determine which axis is sharded from the shape_key.
+    
+    After stacking 2D arrays along axis 0 to get (L, P, Q):
+    - (None, 'data', None) means P (axis 1) is sharded
+    - (None, None, 'data') means Q (axis 2) is sharded
+    
+    Returns 1 for P-sharded, 2 for Q-sharded, 1 as default.
+    """
+    if not isinstance(shape_key, tuple) or len(shape_key) != 2:
+        return 1  # Default to P-sharded
+    
+    _, sharding_spec = shape_key
+    if sharding_spec is None:
+        return 1  # Unsharded, default to P-sharded behavior
+    
+    # sharding_spec is a tuple like (None, 'data', None) for 3D stacked array
+    # Find which position has the mesh_axis
+    for i, spec in enumerate(sharding_spec):
+        if spec == mesh_axis:
+            return i  # Return the sharded axis (0=L, 1=P, 2=Q)
+    
+    return 1  # Default
+
+
 def _apply_orthogonalize_layer_sharded(
     params: base.Updates,
     ns_coeffs: jax.Array,
@@ -438,10 +506,10 @@ def _apply_orthogonalize_layer_sharded(
 ) -> base.Updates:
     """Apply layer-sharded orthogonalization to all 2D params.
     
-    Groups params by shape, applies batched orthogonalization with layer sharding,
-    then reconstructs the tree.
+    Groups params by shape AND sharding, applies batched orthogonalization with 
+    layer sharding (using the appropriate axis based on sharding), then reconstructs the tree.
     """
-    # Batch params by shape
+    # Batch params by shape and sharding
     batched, shape_to_paths, original_paths, tree_struct = batch_params_by_shape(params)
     
     # Apply orthogonalization to each batch
@@ -451,9 +519,12 @@ def _apply_orthogonalize_layer_sharded(
             # Skip non-2D arrays
             orthogonalized_batched[shape_key] = stacked
         else:
-            # Apply layer-sharded orthogonalization
+            # Determine which axis is sharded for this batch
+            sharded_axis = _get_sharded_axis_from_key(shape_key, mesh_axis)
+            
+            # Apply layer-sharded orthogonalization with correct sharded_axis
             orthogonalized_batched[shape_key] = orthogonalize_layer_sharded(
-                stacked, ns_coeffs, ns_steps, eps, mesh, mesh_axis
+                stacked, ns_coeffs, ns_steps, eps, mesh, mesh_axis, sharded_axis
             )
     
     # Reconstruct tree
