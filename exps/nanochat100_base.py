@@ -128,7 +128,7 @@ def get_config():
     cfg.data.batch_size = 64
     cfg.optim.accum_steps = 4
 
-    max_steps = 25_000
+    max_steps = 3.8e9 // 524288
     cfg.max_steps = max_steps
     cfg.generate_every = 500
     cfg.eval_every = -1

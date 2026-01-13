@@ -33,6 +33,7 @@ from jax.sharding import AxisType, PartitionSpec as P, reshard
 import optax
 import orbax.checkpoint as ocp
 from jax import numpy as jnp
+from jax.sharding import reshard
 from sws import run as sws_run
 from transformers import AutoTokenizer
 
@@ -46,6 +47,17 @@ from utils import DummyWandb, pretty_print_samples, MetricLogger
 
 
 
+    # Parallel config validation
+    if cfg.parallel.strategy not in ("dp", "fsdp"):
+        raise ValueError(f"parallel.strategy must be 'dp' or 'fsdp', got '{cfg.parallel.strategy}'")
+    
+    if cfg.parallel.strategy == "dp":
+        if not hasattr(cfg.parallel, 'shard_optimizer'):
+            cfg.parallel.shard_optimizer = False  # default to False
+    elif cfg.parallel.strategy == "fsdp":
+        if hasattr(cfg.parallel, 'shard_optimizer') and cfg.parallel.shard_optimizer is False:
+            warnings.warn("shard_optimizer=False ignored for FSDP (optimizer always sharded)")
+        # cfg.parallel.shard_optimizer = True  # FSDP always shards optimizer
 
 def make_train_step(optimizer, model_config, model_weights, opt_weights):
     model_weights_sharding = jax.tree.map(lambda x: x.sharding, model_weights)
@@ -115,6 +127,17 @@ def train(cfg):
     
     
 
+    
+    elif cfg.parallel.strategy == "fsdp":
+        with axis_rules(SHARDED_RULES):
+            model = model_init()
+        optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+    
+    # Extract shardings for explicit in/out sharding in train_step
+    model_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
+    optimizer_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(optimizer))
+    batch_sharding = (P("data"), P("data"))  # (x, y) both sharded on batch dim
+                
     if main_process:
         # print model stats
         num_params = jax.tree_util.tree_reduce(lambda acc, x: acc + jnp.sum(jnp.asarray(x)), model_weights, initializer=jnp.array(0.0))
@@ -131,9 +154,10 @@ def train(cfg):
             sequence_length=cfg.data.max_length,
             num_flops_per_token=num_flops_per_token,
             xpu_name=cfg.xpu,
+            max_steps=cfg.max_steps,
             wandb_run=wandb_run,
         )
-
+        
         # init profiler
         os.makedirs("profiles", exist_ok=True)
         profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -157,6 +181,8 @@ def train(cfg):
     step = 1
     micro_step = 0
     t0 = time.time()
+    batch = next(train_iter)
+    batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(logical_to_physical(("batch", "seq")), x), batch)
     while step <= cfg.max_steps:
         batch = next(train_iter)
         batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(input_sharding, x), batch)

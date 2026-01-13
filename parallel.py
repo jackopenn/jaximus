@@ -1,3 +1,6 @@
+import contextlib
+import threading
+import jax
 from jax.sharding import PartitionSpec as P
 
 # Embedding: (model_vocab, model_embed)
@@ -51,18 +54,41 @@ SHARDING_RULES = {
 _current_strategy = "dp"
 
 
-def set_sharding_strategy(strategy: str):
-    global _current_strategy
-    if strategy not in SHARDING_RULES:
-        raise ValueError(f"Unknown sharding strategy: {strategy}. Must be one of {list(SHARDING_RULES.keys())}")
-    _current_strategy = strategy
+class _AxisRules(threading.local):
+    rules: tuple = REPLICATED_RULES
+
+_axis_rules = _AxisRules()
+
+
+def get_axis_rules():
+    """Returns the current logical axis rules."""
+    return _axis_rules.rules
+
+
+def set_axis_rules(rules):
+    """Sets the global logical axis rules."""
+    _axis_rules.rules = rules
+
+
+@contextlib.contextmanager
+def axis_rules(rules):
+    """Context manager for setting logical to physical axis bindings."""
+    old_rules = _axis_rules.rules
+    try:
+        _axis_rules.rules = rules
+        yield
+    finally:
+        _axis_rules.rules = old_rules
+
 
 def logical_to_physical(logical_axes):
-    rules = SHARDING_RULES[_current_strategy]
-    return P(*[rules.get(axis, None) for axis in logical_axes])
+    """Convert logical axes to physical PartitionSpec using current rules."""
+    rules_dict = {name: mesh_axis for name, mesh_axis in get_axis_rules()}
+    return P(*[rules_dict.get(axis, None) for axis in logical_axes])
 
 
 def shard_init(init, logical_axes):
+    """Wrap initializer to apply sharding based on logical axes."""
     def init_fn(*args, **kwargs):
         return init(*args, **kwargs, out_sharding=logical_to_physical(logical_axes))
     return init_fn
