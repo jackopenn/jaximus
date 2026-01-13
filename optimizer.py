@@ -105,7 +105,7 @@ def make_optimizer(cfg):
                     learning_rate=schedule_fns["other"],
                     nesterov=True,
                     beta=muon_momentum_schedule,
-                    layer_sharding=True,
+                    # layer_sharding=True,
                 ),
             },
             lambda state: jax.tree.map_with_path(
