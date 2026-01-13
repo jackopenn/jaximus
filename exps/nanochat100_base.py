@@ -57,14 +57,14 @@ def get_config():
     cfg.optim.adamw_b1 = 0.8
     cfg.optim.adamw_b2 = 0.95
 
-    max_steps = 3.8e9 // 524288
+    max_steps = 3.82e9 // 524288
     cfg.max_steps = max_steps
     cfg.generate_every = 500
     cfg.eval_every = -1
     cfg.checkpoint_every = 5000
     cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat100-we-go-again"
     cfg.xpu = "v4"
-    cfg.wandb = False
+    cfg.wandb = True
 
     cfg.parallel.strategy = "fsdp"
     cfg.parallel.data = 16

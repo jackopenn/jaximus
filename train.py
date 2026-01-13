@@ -1,6 +1,4 @@
-from functools import partial
 import os
-
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 
 # XLA performance flags for TPU
@@ -81,6 +79,7 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights):
     return train_step, input_sharding
 
 def train(cfg):
+    wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
     print(cfg.to_dict())
 
     # init mesh
@@ -122,7 +121,7 @@ def train(cfg):
         print(f"{num_flops_per_token=}")
 
         # init logging
-        wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
+        # wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
         train_logger = MetricLogger(
             batch_size=cfg.data.batch_size,
             accum_steps=cfg.optim.accum_steps,
