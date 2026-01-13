@@ -82,9 +82,6 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights):
     return train_step, input_sharding
 
 def train(cfg):
-     # init logging
-    if jax.process_index() == 0:
-        wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
 
     # init mesh
     mesh = jax.make_mesh((cfg.parallel.data, ), ("data", ), (AxisType.Explicit,))
@@ -124,8 +121,8 @@ def train(cfg):
         print(f"{num_params=}")
         print(f"{num_flops_per_token=}")
 
-        # # init logging
-        # wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
+        # init logging
+        wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
         train_logger = MetricLogger(
             batch_size=cfg.data.batch_size,
             accum_steps=cfg.optim.accum_steps,
