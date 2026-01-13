@@ -82,6 +82,15 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights):
     return train_step, input_sharding
 
 def train(cfg):
+    print("starting train")
+    print(f"{jax.process_index()=}")
+    print(f"{jax.process_count()=}")
+    print(f"{jax.local_device_count()=}")
+    print(f"{jax.devices()=}")
+    print(f"{jax.local_devices()=}")
+    print(f"{jax.devices('gpu')=}")
+    print(f"{jax.local_devices('gpu')=}")
+    exit()
 
     # init mesh
     mesh = jax.make_mesh((cfg.parallel.data, ), ("data", ), (AxisType.Explicit,))
