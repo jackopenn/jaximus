@@ -57,7 +57,7 @@ SHARDING_RULES = {
 
 }
 
-_current_strategy = "dp"
+_current_strategy = "fsdp"
 
 
 def logical_to_physical(logical_axes):
@@ -312,11 +312,11 @@ optimizer = optax.adamw(
 optimizer_state = optimizer.init(model_weights)
 
 # Reshard optimizer state to data axis
-optimizer_state = (
-    jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
-    optimizer_state[1],
-    optimizer_state[2],
-)
+# optimizer_state = (
+#     jax.tree.map(lambda x: jax.sharding.reshard(x, P("data",)) if x.ndim > 1 else x, optimizer_state[0]),
+#     optimizer_state[1],
+#     optimizer_state[2],
+# )
 
 if jax.process_index() == 0:
   print("model_weights sharding:")
