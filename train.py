@@ -120,11 +120,8 @@ def train(cfg):
     if main_process:
         print(opt_weights)
     
+    num_params = sum(x.size for x in jax.tree_util.tree_leaves(model_weights))
     if main_process:
-        # print model stats
-        print("before num params")
-        num_params = jax.tree_util.tree_reduce(lambda acc, x: acc + jnp.sum(jnp.asarray(x)), model_weights, initializer=jnp.array(0.0))
-        print("after num params")
         # TODO: update this to use the actual number of flops per token
         num_flops_per_token = num_params * 4 * 2 * cfg.data.max_length
         print(f"{num_params=}")
