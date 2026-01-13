@@ -23,7 +23,8 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 # Check env var to determine if multihost mode is needed
 if os.environ.get("JAX_MULTIHOST", "0") == "1":
     import jax
-    jax.distributed.initialize()
+    if not jax.distributed.is_initialized():
+        jax.distributed.initialize()
 
 import time
 from datetime import datetime
