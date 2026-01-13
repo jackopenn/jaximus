@@ -100,14 +100,10 @@ def make_optimizer(cfg):
                     learning_rate=schedule_fns["lm_head"],
                     **adamw_params,
                 ),
-                # "other": optax.inject_hyperparams(muon)(
-                #     learning_rate=schedule_fns["other"],
-                #     nesterov=True,
-                #     beta=muon_momentum_schedule,
-                # ),
-                "other": optax.adamw(
+                "other": optax.inject_hyperparams(muon)(
                     learning_rate=schedule_fns["other"],
-                    **adamw_params,
+                    nesterov=True,
+                    beta=muon_momentum_schedule,
                 ),
             },
             lambda state: jax.tree.map_with_path(

@@ -1,7 +1,7 @@
 from functools import partial
 import jax
 from jax import numpy as jnp
-from jax.sharding import PartitionSpec as P
+from jax.sharding import PartitionSpec as P, reshard
 import numpy as np
 
 from parallel import logical_to_physical
@@ -168,15 +168,13 @@ def generate(
         local_indices
     )
     
-    # Precompute RoPE embeddings (if using RoPE)
     rope_cos, rope_sin = None, None
     if model_config.position_embedding_type == "rope":
-        dtype = getattr(jnp, model_config.dtype)
         rope_cos, rope_sin = precompute_rope_embeddings(
-            model_config.max_seq_len, model_config.head_dim, model_config.rope_theta, dtype=dtype
+            model_config.max_seq_len, model_config.head_dim, model_config.rope_theta, model_config.dtype
         )
-        rope_cos = jax.lax.with_sharding_constraint(rope_cos, P())
-        rope_sin = jax.lax.with_sharding_constraint(rope_sin, P())
+        rope_cos = reshard(rope_cos, P())
+        rope_sin = reshard(rope_sin, P())
 
     # Create and call sampling function
     key = jax.random.PRNGKey(seed)

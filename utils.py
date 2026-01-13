@@ -57,14 +57,13 @@ class MetricLogger:
     def _human_format(self, num: float, divide_by_1024: bool = False) -> str:
         # https://github.com/huggingface/nanotron/blob/7bc9923285a03069ebffe994379a311aceaea546/src/nanotron/logging/base.py#L268
         if abs(num) < 1:
-            return "{:.3g}".format(num)
+            return "{:.2f}".format(num)
         SIZES = ["", "K", "M", "B", "T", "P", "E"]
-        num = float("{:.3g}".format(num))
         i = 0
         while abs(num) >= 1000 and i < len(SIZES) - 1:
             num /= 1000.0 if not divide_by_1024 else 1024.0
             i += 1
-        return "{}{}".format("{:f}".format(num).rstrip("0").rstrip("."), SIZES[i])
+        return "{:.1f}{}".format(num, SIZES[i])
 
 
     def _format_value(self, key, value):
