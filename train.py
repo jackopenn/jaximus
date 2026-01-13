@@ -46,19 +46,6 @@ from parallel import logical_to_physical, set_sharding_strategy
 from utils import DummyWandb, pretty_print_samples, MetricLogger
 
 
-
-    # Parallel config validation
-    if cfg.parallel.strategy not in ("dp", "fsdp"):
-        raise ValueError(f"parallel.strategy must be 'dp' or 'fsdp', got '{cfg.parallel.strategy}'")
-    
-    if cfg.parallel.strategy == "dp":
-        if not hasattr(cfg.parallel, 'shard_optimizer'):
-            cfg.parallel.shard_optimizer = False  # default to False
-    elif cfg.parallel.strategy == "fsdp":
-        if hasattr(cfg.parallel, 'shard_optimizer') and cfg.parallel.shard_optimizer is False:
-            warnings.warn("shard_optimizer=False ignored for FSDP (optimizer always sharded)")
-        # cfg.parallel.shard_optimizer = True  # FSDP always shards optimizer
-
 def make_train_step(optimizer, model_config, model_weights, opt_weights):
     model_weights_sharding = jax.tree.map(lambda x: x.sharding, model_weights)
     opt_weights_sharding = jax.tree.map(lambda x: x.sharding, opt_weights)
@@ -125,19 +112,6 @@ def train(cfg):
     tx, schedule_fns = cfg.optim.make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
     
-    
-
-    
-    elif cfg.parallel.strategy == "fsdp":
-        with axis_rules(SHARDED_RULES):
-            model = model_init()
-        optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
-    
-    # Extract shardings for explicit in/out sharding in train_step
-    model_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(model))
-    optimizer_sharding = jax.tree.map(lambda x: x.sharding, nnx.state(optimizer))
-    batch_sharding = (P("data"), P("data"))  # (x, y) both sharded on batch dim
-                
     if main_process:
         # print model stats
         num_params = jax.tree_util.tree_reduce(lambda acc, x: acc + jnp.sum(jnp.asarray(x)), model_weights, initializer=jnp.array(0.0))

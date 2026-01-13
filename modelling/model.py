@@ -216,7 +216,9 @@ def forward(
         qk_norm_type=config.qk_norm_type,
         qk_norm_epsilon=config.qk_norm_epsilon,
         sliding_window=config.sliding_window,
-        dtype=config.dtype)
+        dtype=config.dtype,
+        num_heads=config.num_attention_heads,
+        num_kv_heads=config.num_key_value_heads)
     
     mlp_factory = partial(
         mlp if config.mlp_type == "mlp" else glu,
@@ -327,35 +329,35 @@ def init_model_weights(
     layer_weights_list = []
     for _ in range(config.num_layers):
         q_proj = inits["qkv"](
-            next(keys), (config.hidden_dim, config.num_attention_heads, config.head_dim), dtype=jnp.float32,
-            out_sharding=logical_to_physical(("model_embed", "model_q", "head_embed"))
+            next(keys), (config.hidden_dim, config.num_attention_heads * config.head_dim), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_embed", "model_q"))
         )
         k_proj = inits["qkv"](
-            next(keys), (config.hidden_dim, config.num_key_value_heads, config.head_dim), dtype=jnp.float32,
-            out_sharding=logical_to_physical(("model_embed", "model_kv", "head_embed"))
+            next(keys), (config.hidden_dim, config.num_key_value_heads * config.head_dim), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_embed", "model_kv"))
         )
         v_proj = inits["qkv"](
-            next(keys), (config.hidden_dim, config.num_key_value_heads, config.head_dim), dtype=jnp.float32,
-            out_sharding=logical_to_physical(("model_embed", "model_kv", "head_embed"))
+            next(keys), (config.hidden_dim, config.num_key_value_heads * config.head_dim), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_embed", "model_kv"))
         )
         o_proj = inits["o_proj"](
-            next(keys), (config.num_attention_heads, config.head_dim, config.hidden_dim), dtype=jnp.float32,
-            out_sharding=logical_to_physical(("model_q", "head_embed", "model_embed"))
+            next(keys), (config.num_attention_heads * config.head_dim, config.hidden_dim), dtype=jnp.float32,
+            out_sharding=logical_to_physical(("model_q", "model_embed"))
         )
         
         q_bias = k_bias = v_bias = o_bias = None
         if config.attn_use_bias:
             q_bias = inits["bias"](
-                next(keys), (config.num_attention_heads, config.head_dim), dtype=jnp.float32,
-                out_sharding=logical_to_physical(("model_q", "head_embed"))
+                next(keys), (config.num_attention_heads * config.head_dim,), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_q",))
             )
             k_bias = inits["bias"](
-                next(keys), (config.num_key_value_heads, config.head_dim), dtype=jnp.float32,
-                out_sharding=logical_to_physical(("model_kv", "head_embed"))
+                next(keys), (config.num_key_value_heads * config.head_dim,), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_kv",))
             )
             v_bias = inits["bias"](
-                next(keys), (config.num_key_value_heads, config.head_dim), dtype=jnp.float32,
-                out_sharding=logical_to_physical(("model_kv", "head_embed"))
+                next(keys), (config.num_key_value_heads * config.head_dim,), dtype=jnp.float32,
+                out_sharding=logical_to_physical(("model_kv",))
             )
             o_bias = inits["bias"](
                 next(keys), (config.hidden_dim,), dtype=jnp.float32,

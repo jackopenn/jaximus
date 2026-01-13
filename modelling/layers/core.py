@@ -166,42 +166,39 @@ def attention(
     qk_norm_epsilon: Optional[float],
     sliding_window: Optional[int],
     dtype: str,
+    num_heads: int,
+    num_kv_heads: int,
     mask: Optional[jax.Array] = None,
 ) -> jax.Array:
-    # Weights shapes:
-    #   q_proj: (D, N, H) where D=embed, N=num_heads, H=head_dim
-    #   k_proj: (D, K, H) where K=num_kv_heads
-    #   v_proj: (D, K, H)
-    #   o_proj: (N, H, D)
+    # Weights shapes (2D):
+    #   q_proj: (D, N*H) where D=embed, N=num_heads, H=head_dim
+    #   k_proj: (D, K*H) where K=num_kv_heads
+    #   v_proj: (D, K*H)
+    #   o_proj: (N*H, D)
     dtype = getattr(jnp, dtype)
+    batch, seq_len, _ = x.shape
+    head_dim = weights.q_proj.shape[1] // num_heads
     
     with jax.named_scope("q_proj"):
-        q = jnp.einsum(
-            "BSD, DNH -> BSNH", x, weights.q_proj.astype(dtype),
-            out_sharding=logical_to_physical(("batch", "seq", "act_q", "head_embed"))
-        )
+        q = jnp.matmul(x, weights.q_proj.astype(dtype), out_sharding=logical_to_physical(("batch", "seq", "act_q")))
         if weights.q_bias is not None:
             q = q + weights.q_bias.astype(dtype)
+        q = q.reshape(batch, seq_len, num_heads, head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_q", "act_head")))
     
     with jax.named_scope("k_proj"):
-        k = jnp.einsum(
-            "BSD, DKH -> BSKH", x, weights.k_proj.astype(dtype),
-            out_sharding=logical_to_physical(("batch", "seq", "act_kv", "head_embed"))
-        )
+        k = jnp.matmul(x, weights.k_proj.astype(dtype), out_sharding=logical_to_physical(("batch", "seq", "act_kv")))
         if weights.k_bias is not None:
             k = k + weights.k_bias.astype(dtype)
+        k = k.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_kv", "act_head")))
     
     with jax.named_scope("v_proj"):
-        v = jnp.einsum(
-            "BSD, DKH -> BSKH", x, weights.v_proj.astype(dtype),
-            out_sharding=logical_to_physical(("batch", "seq", "act_kv", "head_embed"))
-        )
+        v = jnp.matmul(x, weights.v_proj.astype(dtype), out_sharding=logical_to_physical(("batch", "seq", "act_kv")))
         if weights.v_bias is not None:
             v = v + weights.v_bias.astype(dtype)
+        v = v.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_kv", "act_head")))
     
     if rope_cos is not None and rope_sin is not None:
         with jax.named_scope("apply_rope"):
-            seq_len = x.shape[1]
             cos = rope_cos[:, :seq_len, :, :]
             sin = rope_sin[:, :seq_len, :, :]
             q = apply_rope(q, cos, sin)
@@ -230,8 +227,9 @@ def attention(
         )
     
     with jax.named_scope("o_proj"):
-        out = jnp.einsum(
-            "BSNH, NHD -> BSD", att, weights.o_proj.astype(dtype),
+        att = att.reshape(batch, seq_len, num_heads * head_dim, out_sharding=logical_to_physical(("batch", "seq", "act_q", "act_head")))
+        out = jnp.matmul(
+            att, weights.o_proj.astype(dtype),
             out_sharding=logical_to_physical(("batch", "seq", "act_embed"))
         )
         if weights.o_bias is not None:
