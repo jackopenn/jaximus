@@ -154,14 +154,12 @@ def train(cfg):
     while step <= cfg.max_steps:
         batch = next(train_iter)
         batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(input_sharding, x), batch)
-        print(batch[0].shape, batch[1].shape)
 
         # train step (profile steps 10-20)
         if main_process and micro_step == 10: 
             jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
             model_weights, opt_weights, loss, grad_norm = train_step(model_weights, opt_weights, batch)
-            print(loss)
         if main_process and micro_step == 20:
             jax.profiler.stop_trace()
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")
@@ -174,11 +172,23 @@ def train(cfg):
 
             # log metrics
             if main_process:
-                print("logging metrics")
-                with jax.default_device("cpu"):
-                    lrs = {f"{k}_lr": v(step) for k, v in schedule_fns.items()}
-                
-                print("logging metrics 2")
+                # Pure Python LR computation (no JAX, doesn't block TPU)
+                warmup_steps = cfg.optim.warmup_ratio * cfg.max_steps
+                decay_steps = cfg.optim.decay_ratio * cfg.max_steps
+                decay_start = cfg.max_steps - decay_steps
+                def py_lr(peak, s):
+                    if s < warmup_steps:
+                        return peak * s / max(warmup_steps, 1)
+                    elif s < decay_start:
+                        return peak
+                    else:
+                        return peak * (1 - (s - decay_start) / max(decay_steps, 1))
+                lrs = {
+                    "embed_lr": py_lr(cfg.optim.embed_lr, step),
+                    "lm_head_lr": py_lr(cfg.optim.lm_head_lr, step),
+                    "other_lr": py_lr(cfg.optim.other_lr, step),
+                    "muon_lr": 0.85 + min(step / 300, 1.0) * 0.10,
+                }
                 train_logger.log({
                     "loss": loss,
                     "grad_norm": grad_norm,
