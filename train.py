@@ -21,15 +21,13 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 
 # Must initialize distributed JAX BEFORE any other JAX imports
 # Check env var to determine if multihost mode is needed
+import jax
 if os.environ.get("JAX_MULTIHOST", "0") == "1":
-    import jax
-    if not jax.distributed.is_initialized():
-        jax.distributed.initialize()
+    jax.distributed.initialize()
 
 import time
 from datetime import datetime
 
-import jax
 from jax.sharding import AxisType, PartitionSpec as P, reshard
 import optax
 import orbax.checkpoint as ocp
