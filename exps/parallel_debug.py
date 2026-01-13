@@ -1,8 +1,3 @@
-
-from functools import partial
-import jax
-from jax import numpy as jnp
-import optax
 from sws import Config
 
 
@@ -48,7 +43,19 @@ def get_config():
 
     # target batch size of 524288 tokens (2048 seq_len)
     cfg.data.batch_size = 4
+
+    # optimizer settings
     cfg.optim.accum_steps = 1
+    cfg.optim.embed_lr = lambda: 0.3 * ((cfg.model.hidden_dim / 768) ** -0.5)
+    cfg.optim.lm_head_lr = lambda: 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
+    cfg.optim.other_lr = 0.02
+    cfg.optim.warmup_ratio = 0.0
+    cfg.optim.decay_ratio = 0.4
+    cfg.optim.grad_clip_norm = 1.0
+    cfg.optim.adamw_weight_decay = 0.0
+    cfg.optim.adamw_eps = 1e-10
+    cfg.optim.adamw_b1 = 0.8
+    cfg.optim.adamw_b2 = 0.95
 
     max_steps = 25_000
     cfg.max_steps = max_steps
@@ -61,16 +68,5 @@ def get_config():
 
     cfg.parallel.strategy = "dp"
     cfg.parallel.data = 1
-
-
-    # ---------- optimizer config ----------
-    cfg.optim.warmup_pct = 0.0
-    cfg.optim.decay_pct = 0.4
-    cfg.optim.te_peak_value = lambda: 0.3 * ((cfg.model.hidden_dim / 768) ** -0.5)
-    cfg.optim.lm_head_peak_value = lambda: 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
-    cfg.optim.other_peak_value = 0.02
-    cfg.optim.muon_momentum_start = 0.85
-    cfg.optim.muon_momentum_end = 0.95
-    cfg.optim.muon_momentum_warmup_steps = 300
 
     return cfg

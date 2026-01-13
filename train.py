@@ -43,6 +43,7 @@ from data.hf import get_hf_dataset
 from generate import generate
 from modelling.model import forward, init_model_weights, make_config
 from modelling.layers.position import precompute_rope_embeddings
+from optimizer import make_optimizer
 from parallel import logical_to_physical, set_sharding_strategy
 from utils import DummyWandb, pretty_print_samples, MetricLogger
 
@@ -111,7 +112,7 @@ def train(cfg):
     model_weights = init_model_weights(model_config, key)
     
     # init optimizer
-    tx, schedule_fns = cfg.optim.make_optimizer(cfg)
+    tx, schedule_fns = make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
     
     if main_process:
