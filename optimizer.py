@@ -3,7 +3,8 @@ import jax
 from jax import numpy as jnp
 import optax
 
-from muon import muon
+# from muon import muon
+from muon_2 import muon
 
 
 def warmup_linear_decay_schedule(
@@ -104,6 +105,7 @@ def make_optimizer(cfg):
                     learning_rate=schedule_fns["other"],
                     nesterov=True,
                     beta=muon_momentum_schedule,
+                    layer_sharding=True,
                 ),
             },
             lambda state: jax.tree.map_with_path(
