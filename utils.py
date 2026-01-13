@@ -57,43 +57,21 @@ class MetricLogger:
     def _human_format(self, num: float, divide_by_1024: bool = False) -> str:
         # https://github.com/huggingface/nanotron/blob/7bc9923285a03069ebffe994379a311aceaea546/src/nanotron/logging/base.py#L268
         if abs(num) < 1:
-            return "{:.2f}".format(num)
+            return "{:.3g}".format(num)
         SIZES = ["", "K", "M", "B", "T", "P", "E"]
+        num = float("{:.3g}".format(num))
         i = 0
         while abs(num) >= 1000 and i < len(SIZES) - 1:
             num /= 1000.0 if not divide_by_1024 else 1024.0
             i += 1
-        return "{:.1f}{}".format(num, SIZES[i])
+        return "{}{}".format("{:f}".format(num).rstrip("0").rstrip("."), SIZES[i])
 
-
-    def _format_value(self, key, value):
-        """Format values with consistent width for alignment."""
-        formats = {
-            "loss": "{:.2f}",
-            "grad_norm": "{:.3f}",
-            "embed_lr": "{:.3f}",
-            "lm_head_lr": "{:.4f}",
-            "muon_lr": "{:.3f}",
-            "other_lr": "{:.2f}",
-            "step_time": "{:.2f}",
-        }
-        if key in formats:
-            return formats[key].format(value)
-        return self._human_format(value)
 
     def _pretty_print(self, metrics, step):
-        # Fixed order for consistent output
-        key_order = ["loss", "grad_norm", "embed_lr", "lm_head_lr", "muon_lr", "other_lr", 
-                     "step_time", "tokens_consumed", "tokens_per_second", 
-                     "tokens_per_second_per_device", "mfu"]
-        print_string = f"step: {step:>5}/{self.max_steps} ({step/self.max_steps*100:>5.2f}%)"
-        for k in key_order:
-            if k in metrics:
-                print_string += f", {k}: {self._format_value(k, metrics[k])}"
-        # Any remaining keys not in key_order
+        print_string = f"step: {step}/{self.max_steps} ({step/self.max_steps*100:.2f}%), loss: {self._human_format(metrics['loss'])}"
         for k, v in metrics.items():
-            if k not in key_order:
-                print_string += f", {k}: {self._format_value(k, v)}"
+            if k != "loss":
+                print_string += f", {k}: {self._human_format(v)}"
         print(print_string)
 
 
