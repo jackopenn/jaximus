@@ -3,8 +3,8 @@ import jax
 from jax import numpy as jnp
 import optax
 
-# from muon import muon
-from muon_2 import muon
+from muon import muon
+# from muon_2 import muon
 
 
 def warmup_linear_decay_schedule(

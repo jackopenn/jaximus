@@ -92,10 +92,9 @@ def test_batch_unbatch_params():
     batched, shape_to_paths, original_paths, tree_struct = batch_params_by_shape(params)
     
     # Check batching grouped correctly
-    # Keys are now ((shape), sharding_key) tuples
-    # On single device, sharding_key should be None
-    shape_64_128_key = ((64, 128), None)
-    shape_128_64_key = ((128, 64), None)
+    # Keys are now just shape tuples
+    shape_64_128_key = (64, 128)
+    shape_128_64_key = (128, 64)
     
     assert shape_64_128_key in batched, f"Missing (64, 128) shape group. Keys: {list(batched.keys())}"
     assert shape_128_64_key in batched, f"Missing (128, 64) shape group. Keys: {list(batched.keys())}"

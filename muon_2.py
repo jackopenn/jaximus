@@ -271,36 +271,66 @@ def _reconstruct_tree(flat_values: List[jax.Array], paths: List[Any], tree_struc
     return jax.tree_util.tree_unflatten(tree_struct, leaves)
 
 
-def _get_sharding_key(arr: jax.Array) -> Optional[Tuple]:
-    """Get a hashable key representing the array's sharding.
+def _get_sharding_spec(arr: jax.Array) -> Optional[Tuple]:
+    """Get the sharding spec from an array if available.
     
     Returns None for unsharded arrays, or a tuple of the PartitionSpec for sharded arrays.
     """
     try:
         sharding = arr.sharding
-        if hasattr(sharding, 'spec'):
-            # NamedSharding has a spec attribute
+        if hasattr(sharding, 'spec') and sharding.spec is not None:
             return tuple(sharding.spec)
         return None
-    except (AttributeError, ValueError):
+    except (AttributeError, ValueError, TypeError):
         return None
+
+
+def _reshard_to_match(arrays: List[jax.Array]) -> List[jax.Array]:
+    """Reshard all arrays to match the sharding of the first array.
+    
+    This ensures all arrays can be stacked together without sharding mismatches.
+    """
+    if len(arrays) <= 1:
+        return arrays
+    
+    # Get the target sharding from the first array
+    try:
+        target_sharding = arrays[0].sharding
+        if target_sharding is None:
+            return arrays
+        
+        # Reshard all other arrays to match
+        result = [arrays[0]]
+        for arr in arrays[1:]:
+            try:
+                arr_sharding = arr.sharding
+                if arr_sharding != target_sharding:
+                    # Use with_sharding_constraint to reshard
+                    arr = jax.lax.with_sharding_constraint(arr, target_sharding)
+            except (AttributeError, ValueError, TypeError):
+                pass
+            result.append(arr)
+        return result
+    except (AttributeError, ValueError, TypeError):
+        return arrays
 
 
 def batch_params_by_shape(
     params: base.Updates
 ) -> Tuple[Dict[Any, jax.Array], Dict[Any, List[Any]], List[Any], Any]:
-    """Group parameters by shape AND sharding, then stack them along a layer axis.
+    """Group parameters by shape, then stack them along a layer axis.
     
-    Parameters with the same shape but different shardings are grouped separately
-    to avoid JAX's sharding mismatch errors during stacking.
+    Arrays with the same shape are grouped together. Before stacking, all arrays
+    in a group are resharded to match the sharding of the first array to avoid
+    JAX's sharding mismatch errors.
     
     Args:
         params: Parameter tree (typically momentum values)
         
     Returns:
         Tuple of:
-        - batched: Dict mapping (shape, sharding_key) to stacked tensor of shape (L, P, Q)
-        - shape_to_paths: Dict mapping (shape, sharding_key) to list of tree paths
+        - batched: Dict mapping shape to stacked tensor of shape (L, P, Q)
+        - shape_to_paths: Dict mapping shape to list of tree paths
         - original_paths: List of paths in original tree traversal order
         - tree_struct: Tree structure for reconstruction
     """
@@ -309,15 +339,15 @@ def batch_params_by_shape(
     # Save original path order for reconstruction
     original_paths = [path for path, _ in flat_with_paths]
     
-    # Group by shape AND sharding
+    # Group by shape only (not sharding)
     shape_groups: Dict[Any, List[Tuple[Any, jax.Array]]] = {}
     for path, arr in flat_with_paths:
         if arr.ndim != 2:
             # Non-2D arrays get their own "group"
-            key = ("non2d", arr.shape, _get_sharding_key(arr))
+            key = ("non2d", arr.shape)
         else:
-            # 2D arrays: group by (shape, sharding)
-            key = (arr.shape, _get_sharding_key(arr))
+            # 2D arrays: group by shape only
+            key = arr.shape
         
         if key not in shape_groups:
             shape_groups[key] = []
@@ -334,6 +364,8 @@ def batch_params_by_shape(
             # Keep non-2D arrays as-is (wrapped in list for consistency)
             batched[shape_key] = arrays
         else:
+            # Reshard all arrays to match the first one's sharding
+            arrays = _reshard_to_match(arrays)
             # Stack 2D arrays along new axis 0
             batched[shape_key] = jnp.stack(arrays, axis=0)
         
@@ -471,29 +503,27 @@ def scale_by_muon(
     return base.GradientTransformation(init_fn, update_fn)
 
 
-def _get_sharded_axis_from_key(shape_key: Any, mesh_axis: str) -> int:
-    """Determine which axis is sharded from the shape_key.
+def _get_sharded_axis_from_array(arr: jax.Array, mesh_axis: str) -> int:
+    """Determine which axis is sharded from the array's sharding.
     
-    After stacking 2D arrays along axis 0 to get (L, P, Q):
+    For a 3D stacked array (L, P, Q):
     - (None, 'data', None) means P (axis 1) is sharded
     - (None, None, 'data') means Q (axis 2) is sharded
     
     Returns 1 for P-sharded, 2 for Q-sharded, 1 as default.
     """
-    if not isinstance(shape_key, tuple) or len(shape_key) != 2:
-        return 1  # Default to P-sharded
+    try:
+        sharding = arr.sharding
+        if hasattr(sharding, 'spec') and sharding.spec is not None:
+            spec = sharding.spec
+            # Find which position has the mesh_axis
+            for i, s in enumerate(spec):
+                if s == mesh_axis:
+                    return i  # Return the sharded axis (0=L, 1=P, 2=Q)
+    except (AttributeError, ValueError, TypeError):
+        pass
     
-    _, sharding_spec = shape_key
-    if sharding_spec is None:
-        return 1  # Unsharded, default to P-sharded behavior
-    
-    # sharding_spec is a tuple like (None, 'data', None) for 3D stacked array
-    # Find which position has the mesh_axis
-    for i, spec in enumerate(sharding_spec):
-        if spec == mesh_axis:
-            return i  # Return the sharded axis (0=L, 1=P, 2=Q)
-    
-    return 1  # Default
+    return 1  # Default to P-sharded
 
 
 def _apply_orthogonalize_layer_sharded(
@@ -506,10 +536,10 @@ def _apply_orthogonalize_layer_sharded(
 ) -> base.Updates:
     """Apply layer-sharded orthogonalization to all 2D params.
     
-    Groups params by shape AND sharding, applies batched orthogonalization with 
-    layer sharding (using the appropriate axis based on sharding), then reconstructs the tree.
+    Groups params by shape, applies batched orthogonalization with layer sharding
+    (using the appropriate axis based on sharding), then reconstructs the tree.
     """
-    # Batch params by shape and sharding
+    # Batch params by shape
     batched, shape_to_paths, original_paths, tree_struct = batch_params_by_shape(params)
     
     # Apply orthogonalization to each batch
@@ -519,8 +549,8 @@ def _apply_orthogonalize_layer_sharded(
             # Skip non-2D arrays
             orthogonalized_batched[shape_key] = stacked
         else:
-            # Determine which axis is sharded for this batch
-            sharded_axis = _get_sharded_axis_from_key(shape_key, mesh_axis)
+            # Determine which axis is sharded from the stacked array
+            sharded_axis = _get_sharded_axis_from_array(stacked, mesh_axis)
             
             # Apply layer-sharded orthogonalization with correct sharded_axis
             orthogonalized_batched[shape_key] = orthogonalize_layer_sharded(
