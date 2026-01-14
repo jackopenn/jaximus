@@ -57,7 +57,7 @@ def get_config():
     cfg.optim.adamw_b1 = 0.8
     cfg.optim.adamw_b2 = 0.95
 
-    max_steps = 3 * 3.82e9 // 524288
+    max_steps = 6 * 3.82e9 // 524288
     cfg.max_steps = max_steps
     cfg.generate_every = 500
     cfg.eval_every = -1
