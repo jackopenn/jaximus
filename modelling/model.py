@@ -179,7 +179,6 @@ def forward(
     rope_cos: Optional[jax.Array] = None,
     rope_sin: Optional[jax.Array] = None,
     mask: Optional[jax.Array] = None,
-    debug: bool = False,
 ) -> jax.Array:
     dtype = getattr(jnp, config.dtype)
 
@@ -188,16 +187,10 @@ def forward(
         eps=config.norm_epsilon,
     )
     
-    if debug:
-        jax.debug.print("input x type: {}", jax.typeof(x))
-    
     with jax.named_scope("token_embedding"):
         x = weights.embed.at[x].get(
             out_sharding=logical_to_physical(("batch", "act_seq", "act_embed"))
         ).astype(dtype)
-    
-    if debug:
-        jax.debug.print("after embed x type: {}", jax.typeof(x))
     
     if config.position_embedding_type == "learned" and weights.pos_embed is not None:
         with jax.named_scope("pos_embedding"):
