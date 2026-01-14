@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import optax
 from optax._src import base, numerics, transform
-from jax.sharding import PartitionSpec as P, get_mesh
+from jax.sharding import PartitionSpec as P
 from jax.experimental.shard_map import shard_map
 
 
@@ -63,8 +63,9 @@ def _get_sharded_axis(spec):
 
 def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_steps: int, eps: float) -> jax.Array:
     """Apply layer-sharded NS orthogonalization to stacked tensor (L, P, Q)."""
-    mesh = get_mesh()
-    spec = jax.typeof(stacked).sharding.spec
+    sharding = jax.typeof(stacked).sharding
+    mesh = sharding.mesh
+    spec = sharding.spec
     sharded_axis = _get_sharded_axis(spec[1:])  # Check P, Q dims (skip L)
     
     if sharded_axis is None:
@@ -75,8 +76,11 @@ def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_step
     axis_size = mesh.shape[axis_name]
     num_layers = stacked.shape[0]
     
-    if num_layers < axis_size:
-        return _orthogonalize_single(stacked, ns_coeffs, ns_steps, eps)
+    padded_layers = ((num_layers + axis_size - 1) // axis_size) * axis_size
+    pad_size = padded_layers - num_layers
+    if pad_size > 0:
+        pad_width = [(0, pad_size)] + [(0, 0)] * (stacked.ndim - 1)
+        stacked = jnp.pad(stacked, pad_width)
     
     in_spec = list(spec)
     out_spec = list(spec)
@@ -84,8 +88,6 @@ def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_step
     out_spec[0] = None
     
     def ns_kernel(x, ns_coeffs):
-        # x shape inside shard_map: (L, P/S, Q) or (L, P, Q/S)
-        # all_to_all to reshard: (L, P/S, Q) -> (L/S, P, Q)
         x = jax.lax.all_to_all(x, axis_name, split_axis=0, concat_axis=sharded_axis, tiled=True)
         
         transposed = x.shape[-2] > x.shape[-1]
@@ -97,7 +99,6 @@ def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_step
         if transposed:
             x = x.swapaxes(-2, -1)
         
-        # all_to_all back: (L/S, P, Q) -> (L, P/S, Q)
         x = jax.lax.all_to_all(x, axis_name, split_axis=sharded_axis, concat_axis=0, tiled=True)
         return x
     
@@ -109,7 +110,8 @@ def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_step
         check_rep=False,
     )
     
-    return sharded_ns(stacked, ns_coeffs)
+    result = sharded_ns(stacked, ns_coeffs)
+    return result[:num_layers] if pad_size > 0 else result
 
 
 def orthogonalize_layer_sharded(params, ns_coeffs: jax.Array, ns_steps: int, eps: float):
