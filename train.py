@@ -85,6 +85,7 @@ def train(cfg):
     main_process = jax.process_index() == 0
     if main_process:
         print(f"{mesh=}")
+        print()
 
     # init tokenizer
     tokenizer = AutoTokenizer.from_pretrained(cfg.data.tokenizer_name)
@@ -109,6 +110,20 @@ def train(cfg):
     tx = make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
     
+    print("model_weights sharding:")
+    print(f"embed: {jax.typeof(model_weights.embed)}")
+    print(f"layer_weights:")
+    print(f"    attention_weights:")
+    print(f"        q_proj: {jax.typeof(model_weights.layer_weights[0].attention_weights.q_proj)}")
+    print(f"        k_proj: {jax.typeof(model_weights.layer_weights[0].attention_weights.k_proj)}")
+    print(f"        v_proj: {jax.typeof(model_weights.layer_weights[0].attention_weights.v_proj)}")
+    print(f"        o_proj: {jax.typeof(model_weights.layer_weights[0].attention_weights.o_proj)}")
+    print(f"    mlp_weights:")
+    print(f"        up_proj: {jax.typeof(model_weights.layer_weights[0].mlp_weights.up_proj)}")
+    print(f"        down_proj: {jax.typeof(model_weights.layer_weights[0].mlp_weights.down_proj)}")
+    print(f"unembed: {jax.typeof(model_weights.unembed)}")
+    print()
+    
     num_params = sum(x.size for x in jax.tree_util.tree_leaves(model_weights))
     num_embed_params = model_weights.embed.size + (model_weights.pos_embed.size if model_weights.pos_embed is not None else 0)
     num_flops_per_token = (
@@ -118,7 +133,8 @@ def train(cfg):
     if main_process:
         print(f"{num_params=}")
         print(f"{num_flops_per_token=}")
-
+        print()
+        
         # init logging
         wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
         train_logger = MetricLogger(
