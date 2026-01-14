@@ -87,8 +87,9 @@ def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_step
     in_spec[0] = None
     out_spec[0] = None
     eps_arr = jnp.asarray(eps)
+    ns_steps_arr = jnp.asarray(ns_steps)
     
-    def ns_kernel(x, ns_coeffs, eps_val):
+    def ns_kernel(x, ns_coeffs, eps_val, ns_steps_val):
         x = jax.lax.all_to_all(x, axis_name, split_axis=0, concat_axis=sharded_axis, tiled=True)
         
         transposed = x.shape[-2] > x.shape[-1]
@@ -96,7 +97,7 @@ def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_step
             x = x.swapaxes(-2, -1)
         x = x / (jnp.linalg.norm(x, axis=(-2, -1), keepdims=True) + eps_val)
         ns_coeffs_typed = ns_coeffs.astype(x.dtype)
-        x = jax.lax.fori_loop(0, ns_steps, lambda _, x: _newton_schulz_iteration(x, ns_coeffs_typed), x, unroll=True)
+        x = jax.lax.fori_loop(0, ns_steps_val, lambda _, x: _newton_schulz_iteration(x, ns_coeffs_typed), x)
         if transposed:
             x = x.swapaxes(-2, -1)
         
@@ -106,12 +107,12 @@ def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_step
     sharded_ns = shard_map(
         ns_kernel,
         mesh=mesh,
-        in_specs=(P(*in_spec), P(), P()),
+        in_specs=(P(*in_spec), P(), P(), P()),
         out_specs=P(*out_spec),
         check_rep=False,
     )
     
-    result = sharded_ns(stacked, ns_coeffs, eps_arr)
+    result = sharded_ns(stacked, ns_coeffs, eps_arr, ns_steps_arr)
     return result[:num_layers] if pad_size > 0 else result
 
 
