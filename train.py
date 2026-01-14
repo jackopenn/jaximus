@@ -217,7 +217,7 @@ def train(cfg):
     
     # final checkpoint (skip if last step was already checkpointed)
     if cfg.max_steps % cfg.checkpoint_every != 0:
-        checkpoint_manager.save(cfg.max_steps, args=ocp.args.StandardSave(model_weights))
+        checkpoint_manager.save(int(cfg.max_steps), args=ocp.args.StandardSave(model_weights))
         checkpoint_manager.wait_until_finished() # must wait before logging to wandb
         if main_process:
             wandb_run.log_artifact(f"{checkpoint_dir}/{cfg.max_steps}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{cfg.max_steps}"])
