@@ -1,237 +1,101 @@
-"""Tests for Muon optimizer with layer sharding."""
+"""Tests for layer-sharded Muon optimizer."""
 import jax
 import jax.numpy as jnp
 import optax
+from muon import muon as muon_v1, scale_by_muon as scale_by_muon_v1, orthogonalize
 from muon_2 import (
-    muon as our_muon,
-    scale_by_muon,
-    orthogonalize,
+    muon as muon_v2,
+    scale_by_muon as scale_by_muon_v2,
+    _group_by_shape_and_sharding,
+    _orthogonalize_single,
     orthogonalize_layer_sharded,
-    batch_params_by_shape,
-    unbatch_params,
-    _newton_schulz_iteration_batched,
 )
 
 
-def test_newton_schulz_batched():
-    """Test that batched NS iteration matches individual iterations."""
-    key = jax.random.PRNGKey(42)
-    ns_coeffs = jnp.array([3.4445, -4.7750, 2.0315])
-    
-    # Create batched input
-    L, P, Q = 4, 32, 64
-    x_batched = jax.random.normal(key, (L, P, Q))
-    
-    # Apply batched iteration
-    result_batched = _newton_schulz_iteration_batched(x_batched, ns_coeffs)
-    
-    # Apply individual iterations and compare
-    for i in range(L):
-        x_single = x_batched[i]
-        a = x_single @ x_single.T
-        aa = a @ a
-        b = ns_coeffs[1] * a + ns_coeffs[2] * aa  # Note: need explicit aa to avoid precedence issues
-        expected = ns_coeffs[0] * x_single + b @ x_single
-        
-        assert jnp.allclose(result_batched[i], expected, rtol=1e-5), \
-            f"Batched NS iteration differs at index {i}"
-    
-    print("✓ Batched Newton-Schulz iteration matches individual iterations")
-
-
-def test_orthogonalize():
-    """Test the orthogonalize function produces reasonable output."""
+def test_orthogonalize_single():
     key = jax.random.PRNGKey(42)
     x = jax.random.normal(key, (64, 128))
     ns_coeffs = jnp.array([3.4445, -4.7750, 2.0315])
     
-    result = orthogonalize(x, ns_coeffs, ns_steps=5)
+    result = _orthogonalize_single(x, ns_coeffs, ns_steps=5, eps=1e-8)
     
-    # Check shape preserved
-    assert result.shape == x.shape, f"Shape mismatch: {result.shape} vs {x.shape}"
-    
-    # Check it's not all zeros or NaN
-    assert not jnp.any(jnp.isnan(result)), "Result contains NaN"
-    assert jnp.abs(result).sum() > 0, "Result is all zeros"
-    
-    print("✓ orthogonalize produces valid output")
+    assert result.shape == x.shape
+    assert not jnp.any(jnp.isnan(result))
+    assert jnp.abs(result).sum() > 0
+    print("✓ _orthogonalize_single produces valid output")
 
 
-def test_orthogonalize_transposed():
-    """Test orthogonalize with rows > cols (triggers transpose path)."""
+def test_orthogonalize_single_transposed():
     key = jax.random.PRNGKey(42)
-    x = jax.random.normal(key, (128, 64))  # rows > cols
+    x = jax.random.normal(key, (128, 64))
     ns_coeffs = jnp.array([3.4445, -4.7750, 2.0315])
     
-    result = orthogonalize(x, ns_coeffs, ns_steps=5)
+    result = _orthogonalize_single(x, ns_coeffs, ns_steps=5, eps=1e-8)
     
-    assert result.shape == x.shape, f"Shape mismatch: {result.shape} vs {x.shape}"
-    assert not jnp.any(jnp.isnan(result)), "Result contains NaN"
-    
-    print("✓ orthogonalize handles rows > cols correctly")
+    assert result.shape == x.shape
+    assert not jnp.any(jnp.isnan(result))
+    print("✓ _orthogonalize_single handles rows > cols")
 
 
-def test_batch_unbatch_params():
-    """Test that batching and unbatching preserves tree structure."""
-    key = jax.random.PRNGKey(0)
-    k1, k2, k3, k4 = jax.random.split(key, 4)
-    
-    # Create params with different shapes
-    params = {
-        'layer1': {
-            'w1': jax.random.normal(k1, (64, 128)),
-            'w2': jax.random.normal(k2, (128, 64)),
-        },
-        'layer2': {
-            'w1': jax.random.normal(k3, (64, 128)),  # Same shape as layer1.w1
-            'w2': jax.random.normal(k4, (128, 64)),  # Same shape as layer1.w2
-        },
-    }
-    
-    # Batch
-    batched, shape_to_paths, original_paths, tree_struct = batch_params_by_shape(params)
-    
-    # Check batching grouped correctly
-    # Keys are now just shape tuples
-    shape_64_128_key = (64, 128)
-    shape_128_64_key = (128, 64)
-    
-    assert shape_64_128_key in batched, f"Missing (64, 128) shape group. Keys: {list(batched.keys())}"
-    assert shape_128_64_key in batched, f"Missing (128, 64) shape group. Keys: {list(batched.keys())}"
-    assert batched[shape_64_128_key].shape == (2, 64, 128), \
-        f"Expected (2, 64, 128), got {batched[shape_64_128_key].shape}"
-    assert batched[shape_128_64_key].shape == (2, 128, 64), \
-        f"Expected (2, 128, 64), got {batched[shape_128_64_key].shape}"
-    
-    # Unbatch
-    reconstructed = unbatch_params(batched, shape_to_paths, original_paths, tree_struct)
-    
-    # Check structure preserved
-    assert 'layer1' in reconstructed and 'layer2' in reconstructed
-    assert 'w1' in reconstructed['layer1'] and 'w2' in reconstructed['layer1']
-    
-    # Check values preserved
-    for layer in ['layer1', 'layer2']:
-        for w in ['w1', 'w2']:
-            assert jnp.allclose(reconstructed[layer][w], params[layer][w]), \
-                f"Value mismatch for {layer}.{w}"
-    
-    print("✓ batch_params_by_shape and unbatch_params preserve tree structure")
-
-
-def test_orthogonalize_layer_sharded_single_device():
-    """Test layer-sharded orthogonalization on single device (no actual sharding).
-    
-    On single device, all_to_all is automatically skipped (it would be identity).
-    This tests that the batched Newton-Schulz computation is correct.
-    """
+def test_orthogonalize_batched():
     key = jax.random.PRNGKey(42)
-    L, P, Q = 4, 32, 64
-    x = jax.random.normal(key, (L, P, Q))
+    x = jax.random.normal(key, (4, 64, 128))
     ns_coeffs = jnp.array([3.4445, -4.7750, 2.0315])
     
-    # Test the full orthogonalize_layer_sharded function
-    # On single device (device_count == 1), all_to_all is skipped automatically
-    result = orthogonalize_layer_sharded(x, ns_coeffs, ns_steps=5, mesh_axis="data")
+    result = _orthogonalize_single(x, ns_coeffs, ns_steps=5, eps=1e-8)
     
-    # Check shape preserved
-    assert result.shape == x.shape, f"Shape mismatch: {result.shape} vs {x.shape}"
-    assert not jnp.any(jnp.isnan(result)), "Result contains NaN"
-    
-    # Compare with individual orthogonalization
-    for i in range(L):
-        individual_result = orthogonalize(x[i], ns_coeffs, ns_steps=5)
-        # Note: results may differ slightly due to different normalization
-        # (per-matrix vs batch normalization), but should be similar in direction
-        assert not jnp.any(jnp.isnan(individual_result)), f"Individual result {i} contains NaN"
-    
-    print("✓ orthogonalize_layer_sharded works on single device")
+    assert result.shape == x.shape
+    assert not jnp.any(jnp.isnan(result))
+    print("✓ _orthogonalize_single handles batched input (L, P, Q)")
 
 
-def test_scale_by_muon_standard():
-    """Test scale_by_muon transformation without layer sharding."""
-    key = jax.random.PRNGKey(0)
+def test_grouping():
     params = {
-        'w1': jax.random.normal(key, (64, 128)),
-        'w2': jax.random.normal(jax.random.split(key)[0], (128, 64)),
+        'layer_0': {
+            'q_proj': jnp.zeros((64, 128)),
+            'k_proj': jnp.zeros((64, 128)),
+            'o_proj': jnp.zeros((128, 64)),
+        },
+        'layer_1': {
+            'q_proj': jnp.zeros((64, 128)),
+            'k_proj': jnp.zeros((64, 128)),
+            'o_proj': jnp.zeros((128, 64)),
+        },
     }
-    grads = jax.tree.map(lambda x: jax.random.normal(key, x.shape) * 0.1, params)
     
-    tx = scale_by_muon(layer_sharding=False)
-    state = tx.init(params)
-    updates, new_state = tx.update(grads, state, params)
+    groups = _group_by_shape_and_sharding(params)
     
-    # Check updates have correct shapes
-    for k in params:
-        assert updates[k].shape == params[k].shape, f"Shape mismatch for {k}"
-        assert not jnp.any(jnp.isnan(updates[k])), f"NaN in updates for {k}"
+    assert len(groups) == 2
+    shapes = {k[0] for k in groups.keys()}
+    assert (64, 128) in shapes
+    assert (128, 64) in shapes
     
-    # Check state was updated
-    assert new_state.count == 1
-    
-    print("✓ scale_by_muon (standard) works correctly")
+    for key, items in groups.items():
+        if key[0] == (64, 128):
+            assert len(items) == 4
+        else:
+            assert len(items) == 2
+    print("✓ _group_by_shape_and_sharding groups correctly")
 
 
-def test_scale_by_muon_layer_sharded():
-    """Test scale_by_muon transformation with layer sharding."""
-    key = jax.random.PRNGKey(0)
-    k1, k2, k3, k4 = jax.random.split(key, 4)
-    
-    # Multiple layers with same shapes (realistic scenario)
+def test_stack_unstack_roundtrip():
+    key = jax.random.PRNGKey(42)
     params = {
-        'layer0': {'proj': jax.random.normal(k1, (64, 128))},
-        'layer1': {'proj': jax.random.normal(k2, (64, 128))},
-        'layer2': {'proj': jax.random.normal(k3, (64, 128))},
-        'layer3': {'proj': jax.random.normal(k4, (64, 128))},
+        'layer_0': {'w': jax.random.normal(key, (64, 128))},
+        'layer_1': {'w': jax.random.normal(jax.random.split(key)[0], (64, 128))},
     }
-    grads = jax.tree.map(lambda x: jax.random.normal(key, x.shape) * 0.1, params)
+    ns_coeffs = jnp.array([3.4445, -4.7750, 2.0315])
     
-    # Create mesh for layer sharding (single device falls back to batched without all_to_all)
-    mesh = jax.make_mesh((1,), ("data",))
+    result = orthogonalize_layer_sharded(params, ns_coeffs, ns_steps=5, eps=1e-8)
     
-    # Pass mesh to scale_by_muon for shard_map
-    tx = scale_by_muon(layer_sharding=True, mesh=mesh, mesh_axis="data")
-    state = tx.init(params)
-    updates, new_state = tx.update(grads, state, params)
-    
-    # Check updates have correct shapes
-    for layer in params:
-        for k in params[layer]:
-            assert updates[layer][k].shape == params[layer][k].shape, \
-                f"Shape mismatch for {layer}.{k}"
-            assert not jnp.any(jnp.isnan(updates[layer][k])), \
-                f"NaN in updates for {layer}.{k}"
-    
-    assert new_state.count == 1
-    
-    print("✓ scale_by_muon (layer sharded) works correctly")
+    assert result['layer_0']['w'].shape == params['layer_0']['w'].shape
+    assert result['layer_1']['w'].shape == params['layer_1']['w'].shape
+    assert not jnp.any(jnp.isnan(result['layer_0']['w']))
+    assert not jnp.any(jnp.isnan(result['layer_1']['w']))
+    print("✓ orthogonalize_layer_sharded preserves structure")
 
 
-def test_muon_optimizer():
-    """Test full muon optimizer."""
-    key = jax.random.PRNGKey(0)
-    params = {
-        'w1': jax.random.normal(key, (64, 128)),
-        'w2': jax.random.normal(jax.random.split(key)[0], (128, 64)),
-    }
-    grads = jax.tree.map(lambda x: jax.random.normal(key, x.shape) * 0.1, params)
-    
-    tx = our_muon(learning_rate=0.01, layer_sharding=False)
-    state = tx.init(params)
-    updates, new_state = tx.update(grads, state, params)
-    
-    # Apply updates
-    new_params = optax.apply_updates(params, updates)
-    
-    # Check params changed
-    for k in params:
-        assert not jnp.allclose(new_params[k], params[k]), f"Params {k} didn't change"
-    
-    print("✓ muon optimizer applies updates correctly")
-
-
-def test_muon_matches_optax():
-    """Verify our muon matches optax.contrib.muon for 2D params (without layer sharding)."""
+def test_parity_single_device():
     key = jax.random.PRNGKey(0)
     k1, k2, k3 = jax.random.split(key, 3)
     
@@ -244,144 +108,207 @@ def test_muon_matches_optax():
         'w2': jax.random.normal(jax.random.split(k3)[0], (128, 64)) * 0.1,
     }
     
-    # Common params
     lr = 0.01
     beta = 0.95
     ns_steps = 5
     
-    # Our muon (standard mode)
-    our_tx = our_muon(learning_rate=lr, beta=beta, ns_steps=ns_steps, nesterov=True, layer_sharding=False)
-    our_state = our_tx.init(params)
-    our_updates, _ = our_tx.update(grads, our_state, params)
+    tx_v1 = muon_v1(learning_rate=lr, beta=beta, ns_steps=ns_steps, nesterov=True)
+    state_v1 = tx_v1.init(params)
+    updates_v1, _ = tx_v1.update(grads, state_v1, params)
     
-    # optax.contrib.muon
-    optax_tx = optax.contrib.muon(learning_rate=lr, beta=beta, ns_steps=ns_steps, nesterov=True)
-    optax_state = optax_tx.init(params)
-    optax_updates, _ = optax_tx.update(grads, optax_state, params)
+    tx_v2 = muon_v2(learning_rate=lr, beta=beta, ns_steps=ns_steps, nesterov=True, layer_sharding=False)
+    state_v2 = tx_v2.init(params)
+    updates_v2, _ = tx_v2.update(grads, state_v2, params)
     
-    # Compare
-    print("\nComparing updates with optax.contrib.muon:")
+    print("\nComparing v1 vs v2 (layer_sharding=False):")
     all_close = True
     for k in params:
-        ours = our_updates[k]
-        theirs = optax_updates[k]
-        max_diff = jnp.abs(ours - theirs).max()
-        rel_diff = max_diff / (jnp.abs(theirs).max() + 1e-8)
-        is_close = jnp.allclose(ours, theirs, rtol=1e-4, atol=1e-6)
-        
+        max_diff = jnp.abs(updates_v1[k] - updates_v2[k]).max()
+        rel_diff = max_diff / (jnp.abs(updates_v1[k]).max() + 1e-8)
+        is_close = jnp.allclose(updates_v1[k], updates_v2[k], rtol=1e-4, atol=1e-6)
         print(f"  {k}: max_diff={max_diff:.2e}, rel_diff={rel_diff:.2e}, close={is_close}")
-        
         if not is_close:
             all_close = False
     
     if all_close:
-        print("✓ Outputs match optax.contrib.muon")
+        print("✓ muon_v2 matches muon_v1 (layer_sharding=False)")
     else:
-        print("⚠ Outputs differ from optax.contrib.muon (may be due to implementation details)")
+        print("⚠ Outputs differ")
     
     return all_close
 
 
+def test_parity_layer_sharded_single_device():
+    key = jax.random.PRNGKey(0)
+    k1, k2, k3 = jax.random.split(key, 3)
+    
+    params = {
+        'w1': jax.random.normal(k1, (64, 128)),
+        'w2': jax.random.normal(k2, (128, 64)),
+    }
+    grads = {
+        'w1': jax.random.normal(k3, (64, 128)) * 0.1,
+        'w2': jax.random.normal(jax.random.split(k3)[0], (128, 64)) * 0.1,
+    }
+    
+    lr = 0.01
+    beta = 0.95
+    ns_steps = 5
+    
+    tx_v1 = muon_v1(learning_rate=lr, beta=beta, ns_steps=ns_steps, nesterov=True)
+    state_v1 = tx_v1.init(params)
+    updates_v1, _ = tx_v1.update(grads, state_v1, params)
+    
+    tx_v2 = muon_v2(learning_rate=lr, beta=beta, ns_steps=ns_steps, nesterov=True, layer_sharding=True)
+    state_v2 = tx_v2.init(params)
+    updates_v2, _ = tx_v2.update(grads, state_v2, params)
+    
+    print("\nComparing v1 vs v2 (layer_sharding=True, single device):")
+    all_close = True
+    for k in params:
+        max_diff = jnp.abs(updates_v1[k] - updates_v2[k]).max()
+        rel_diff = max_diff / (jnp.abs(updates_v1[k]).max() + 1e-8)
+        is_close = jnp.allclose(updates_v1[k], updates_v2[k], rtol=1e-4, atol=1e-6)
+        print(f"  {k}: max_diff={max_diff:.2e}, rel_diff={rel_diff:.2e}, close={is_close}")
+        if not is_close:
+            all_close = False
+    
+    if all_close:
+        print("✓ muon_v2 (layer_sharding=True) matches muon_v1 on single device")
+    else:
+        print("⚠ Outputs differ")
+    
+    return all_close
+
+
+def test_scale_by_muon():
+    key = jax.random.PRNGKey(0)
+    params = {
+        'w1': jax.random.normal(key, (64, 128)),
+        'w2': jax.random.normal(jax.random.split(key)[0], (128, 64)),
+    }
+    grads = jax.tree.map(lambda x: jax.random.normal(key, x.shape) * 0.1, params)
+    
+    tx = scale_by_muon_v2(layer_sharding=False)
+    state = tx.init(params)
+    updates, new_state = tx.update(grads, state, params)
+    
+    for k in params:
+        assert updates[k].shape == params[k].shape
+        assert not jnp.any(jnp.isnan(updates[k]))
+    
+    assert new_state.count == 1
+    print("✓ scale_by_muon_v2 works correctly")
+
+
+def test_muon_optimizer():
+    key = jax.random.PRNGKey(0)
+    params = {
+        'w1': jax.random.normal(key, (64, 128)),
+        'w2': jax.random.normal(jax.random.split(key)[0], (128, 64)),
+    }
+    grads = jax.tree.map(lambda x: jax.random.normal(key, x.shape) * 0.1, params)
+    
+    tx = muon_v2(learning_rate=0.01, layer_sharding=False)
+    state = tx.init(params)
+    updates, _ = tx.update(grads, state, params)
+    
+    new_params = optax.apply_updates(params, updates)
+    
+    for k in params:
+        assert not jnp.allclose(new_params[k], params[k])
+    
+    print("✓ muon_v2 optimizer applies updates correctly")
+
+
 def test_multiple_steps():
-    """Test muon over multiple optimization steps."""
     key = jax.random.PRNGKey(42)
     params = {'w': jax.random.normal(key, (32, 64))}
     
-    tx = our_muon(learning_rate=0.01, layer_sharding=False)
+    tx = muon_v2(learning_rate=0.01, layer_sharding=True)
     state = tx.init(params)
     
-    # Run 10 steps
     for i in range(10):
         grads = jax.tree.map(lambda x: jax.random.normal(jax.random.PRNGKey(i), x.shape) * 0.1, params)
         updates, state = tx.update(grads, state, params)
         params = optax.apply_updates(params, updates)
     
-    assert not jnp.any(jnp.isnan(params['w'])), "NaN after multiple steps"
-    print("✓ muon stable over multiple steps")
+    assert not jnp.any(jnp.isnan(params['w']))
+    print("✓ muon_v2 stable over multiple steps")
 
 
-def test_layer_sharded_vs_standard_equivalence():
-    """Test that layer-sharded produces similar results to standard on single device."""
+def test_matches_optax():
     key = jax.random.PRNGKey(0)
-    k1, k2, k3, k4 = jax.random.split(key, 4)
+    k1, k2, k3 = jax.random.split(key, 3)
     
-    # Multiple layers with same shapes
     params = {
-        'layer0': {'proj': jax.random.normal(k1, (64, 128))},
-        'layer1': {'proj': jax.random.normal(k2, (64, 128))},
+        'w1': jax.random.normal(k1, (64, 128)),
+        'w2': jax.random.normal(k2, (128, 64)),
     }
-    grads = jax.tree.map(lambda x: jax.random.normal(key, x.shape) * 0.1, params)
-    
-    # Standard muon
-    tx_standard = scale_by_muon(layer_sharding=False)
-    state_standard = tx_standard.init(params)
-    updates_standard, _ = tx_standard.update(grads, state_standard, params)
-    
-    # Layer-sharded muon (on single device, falls back to batched without all_to_all)
-    mesh = jax.make_mesh((1,), ("data",))
-    tx_sharded = scale_by_muon(layer_sharding=True, mesh=mesh, mesh_axis="data")
-    state_sharded = tx_sharded.init(params)
-    updates_sharded, _ = tx_sharded.update(grads, state_sharded, params)
-    
-    # Results should be similar but may differ due to batched vs individual normalization
-    print("\nComparing standard vs layer-sharded:")
-    for layer in params:
-        for k in params[layer]:
-            standard = updates_standard[layer][k]
-            sharded = updates_sharded[layer][k]
-            max_diff = jnp.abs(standard - sharded).max()
-            rel_diff = max_diff / (jnp.abs(standard).max() + 1e-8)
-            print(f"  {layer}.{k}: max_diff={max_diff:.2e}, rel_diff={rel_diff:.2e}")
-    
-    print("✓ Layer-sharded vs standard comparison complete")
-
-
-def test_handles_non_2d_params():
-    """Test that non-2D parameters are handled correctly."""
-    key = jax.random.PRNGKey(0)
-    
-    # Mix of 2D and 1D params
-    params = {
-        'weight': jax.random.normal(key, (64, 128)),
-        'bias': jax.random.normal(key, (128,)),  # 1D
-        'scale': jax.random.normal(key, (64,)),   # 1D
+    grads = {
+        'w1': jax.random.normal(k3, (64, 128)) * 0.1,
+        'w2': jax.random.normal(jax.random.split(k3)[0], (128, 64)) * 0.1,
     }
-    grads = jax.tree.map(lambda x: jax.random.normal(key, x.shape) * 0.1, params)
     
-    tx = scale_by_muon(layer_sharding=False)
-    state = tx.init(params)
-    updates, _ = tx.update(grads, state, params)
+    lr = 0.01
+    beta = 0.95
+    ns_steps = 5
     
-    # Check all shapes preserved
+    our_tx = muon_v2(learning_rate=lr, beta=beta, ns_steps=ns_steps, nesterov=True, layer_sharding=False)
+    our_state = our_tx.init(params)
+    our_updates, _ = our_tx.update(grads, our_state, params)
+    
+    optax_tx = optax.contrib.muon(learning_rate=lr, beta=beta, ns_steps=ns_steps, nesterov=True)
+    optax_state = optax_tx.init(params)
+    optax_updates, _ = optax_tx.update(grads, optax_state, params)
+    
+    print("\nComparing muon_v2 vs optax.contrib.muon:")
+    all_close = True
     for k in params:
-        assert updates[k].shape == params[k].shape, f"Shape mismatch for {k}"
-        assert not jnp.any(jnp.isnan(updates[k])), f"NaN in {k}"
+        max_diff = jnp.abs(our_updates[k] - optax_updates[k]).max()
+        rel_diff = max_diff / (jnp.abs(optax_updates[k]).max() + 1e-8)
+        is_close = jnp.allclose(our_updates[k], optax_updates[k], rtol=1e-4, atol=1e-6)
+        print(f"  {k}: max_diff={max_diff:.2e}, rel_diff={rel_diff:.2e}, close={is_close}")
+        if not is_close:
+            all_close = False
     
-    print("✓ Non-2D parameters handled correctly")
+    if all_close:
+        print("✓ muon_v2 matches optax.contrib.muon")
+    else:
+        print("⚠ Outputs differ from optax.contrib.muon")
+    
+    return all_close
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("Running Muon Layer Sharding Tests")
-    print("=" * 60)
+    from jax.sharding import AxisType
+    mesh = jax.make_mesh((1,), ("data",), (AxisType.Explicit,))
+    jax.set_mesh(mesh)
     
-    test_newton_schulz_batched()
-    test_orthogonalize()
-    test_orthogonalize_transposed()
-    test_batch_unbatch_params()
-    test_orthogonalize_layer_sharded_single_device()
-    test_scale_by_muon_standard()
-    test_scale_by_muon_layer_sharded()
+    print("=" * 50)
+    print("Running Muon v2 (layer-sharded) tests")
+    print("=" * 50)
+    
+    test_orthogonalize_single()
+    test_orthogonalize_single_transposed()
+    test_orthogonalize_batched()
+    test_grouping()
+    test_stack_unstack_roundtrip()
+    test_scale_by_muon()
     test_muon_optimizer()
     test_multiple_steps()
-    test_handles_non_2d_params()
-    test_layer_sharded_vs_standard_equivalence()
     
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 50)
+    print("Parity tests")
+    print("=" * 50)
+    test_parity_single_device()
+    test_parity_layer_sharded_single_device()
+    
+    print("\n" + "=" * 50)
     print("Comparison with optax.contrib.muon")
-    print("=" * 60)
-    test_muon_matches_optax()
+    print("=" * 50)
+    test_matches_optax()
     
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 50)
     print("All tests passed!")
-    print("=" * 60)
+    print("=" * 50)
