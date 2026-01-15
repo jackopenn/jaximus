@@ -26,7 +26,7 @@ def _newton_schulz_iteration(x: jax.Array, coeffs: jax.Array) -> jax.Array:
     return coeffs[0] * x + b @ x
 
 
-def _orthogonalize_single(x: jax.Array, ns_coeffs: jax.Array, ns_steps: int, eps: float) -> jax.Array:
+def orthogonalize(x: jax.Array, ns_coeffs: jax.Array, ns_steps: int, eps: float) -> jax.Array:
     transposed = x.shape[-2] > x.shape[-1]
     if transposed:
         x = x.swapaxes(-2, -1)
@@ -36,14 +36,14 @@ def _orthogonalize_single(x: jax.Array, ns_coeffs: jax.Array, ns_steps: int, eps
     return x.swapaxes(-2, -1) if transposed else x
 
 
-def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_steps: int, eps: float) -> jax.Array:
+def layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_steps: int, eps: float) -> jax.Array:
     sharding = jax.typeof(stacked).sharding
     mesh, spec = sharding.mesh, sharding.spec
     # Find sharded axis in P, Q dims (skip L at index 0)
     sharded_axis_iter = (i + 1 for i, s in enumerate(spec[1:]) if s is not None)
     sharded_axis = next(sharded_axis_iter, None)
     if sharded_axis is None:
-        return _orthogonalize_single(stacked, ns_coeffs, ns_steps, eps)
+        return orthogonalize(stacked, ns_coeffs, ns_steps, eps)
     axis_name = spec[sharded_axis]
     axis_size = mesh.shape[axis_name]
     num_layers = stacked.shape[0]
@@ -63,13 +63,12 @@ def _layer_shard_orthogonalize(stacked: jax.Array, ns_coeffs: jax.Array, ns_step
     @jax.shard_map(
         in_specs=(P(*in_spec), P(), P(), P()),
         out_specs=P(*out_spec),
-        check_rep=False,
     ) 
     def ns_all_to_all(x, ns_coeffs, ns_steps, eps):
         # all to all (sharded on layer axis)
         x = jax.lax.all_to_all(x, axis_name, split_axis=0, concat_axis=sharded_axis, tiled=True)
         # orthogonalize (local)
-        x = _orthogonalize_single(x, ns_coeffs, ns_steps, eps)
+        x = orthogonalize(x, ns_coeffs, ns_steps, eps)
         # all to all (sharded on original axis)
         x = jax.lax.all_to_all(x, axis_name, split_axis=sharded_axis, concat_axis=0, tiled=True)
         return x
@@ -92,7 +91,7 @@ def orthogonalize_layer_sharded(params, ns_coeffs: jax.Array, ns_steps: int, eps
     for _, items in groups.items():
         positions, arrays = zip(*items)
         stacked = jnp.stack(arrays, axis=0)
-        orthogonalized = _layer_shard_orthogonalize(stacked, ns_coeffs, ns_steps, eps)
+        orthogonalized = layer_shard_orthogonalize(stacked, ns_coeffs, ns_steps, eps)
         for i, pos in enumerate(positions):
             results[pos] = orthogonalized[i]
     return treedef.unflatten(results)
@@ -104,6 +103,7 @@ def scale_by_muon(
     beta: float = 0.95,
     eps: float = 1e-8,
     nesterov: bool = True,
+    layer_sharding: bool = True,
 ) -> base.GradientTransformation:
     
     def init_fn(params):
@@ -121,7 +121,13 @@ def scale_by_muon(
         else:
             mu_hat = jax.tree.map(lambda m: m / bias_correction, mu)
         # orthogonalize
-        orthogonalized = orthogonalize_layer_sharded(mu_hat, state.ns_coeffs, ns_steps, eps)
+        if layer_sharding:
+            orthogonalized = orthogonalize_layer_sharded(mu_hat, state.ns_coeffs, ns_steps, eps)
+        else:
+            orthogonalized = jax.tree.map(
+                lambda x: jax.sharding.auto_axes(orthogonalize)(x, state.ns_coeffs, ns_steps, eps, out_sharding=jax.typeof(x).sharding),
+                mu_hat
+            )
         # apply shape factor
         updates = jax.tree.map(lambda x: x * math.sqrt(max(1, x.shape[1] / x.shape[0])), orthogonalized)
         return updates, MuonState(count=count_inc, mu=mu, ns_coeffs=state.ns_coeffs)
@@ -146,6 +152,7 @@ def muon(
             beta=beta,
             eps=eps,
             nesterov=nesterov,
+            layer_sharding=layer_sharding,
         ),
         transform.add_decayed_weights(weight_decay),
         transform.scale_by_learning_rate(learning_rate),
