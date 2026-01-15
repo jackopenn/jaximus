@@ -74,6 +74,8 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights):
         grad_norm = optax.global_norm(grads)
         updates, opt_weights = optimizer.update(grads, opt_weights, model_weights)
         model_weights = optax.apply_updates(model_weights, updates)
+        # Keep embed in bfloat16 after update
+        model_weights = dataclasses.replace(model_weights, embed=model_weights.embed.astype(jnp.bfloat16))
         return model_weights, opt_weights, loss, grad_norm
     
     return train_step, input_sharding
