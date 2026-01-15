@@ -37,7 +37,7 @@ def get_config():
     cfg.model.post_embed_norm = True
     cfg.model.pre_lm_head_norm = True
 
-    cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
+    cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-100BT"]
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
 
@@ -57,7 +57,7 @@ def get_config():
     cfg.optim.adamw_b1 = 0.8
     cfg.optim.adamw_b2 = 0.95
 
-    max_steps = 6 * 3.82e9 // 524288
+    max_steps = 10 * 3.82e9 // 524288
     cfg.max_steps = max_steps
     cfg.generate_every = 500
     cfg.eval_every = -1

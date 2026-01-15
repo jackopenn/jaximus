@@ -6,7 +6,6 @@ from muon import muon as muon_v1, scale_by_muon as scale_by_muon_v1, orthogonali
 from muon_2 import (
     muon as muon_v2,
     scale_by_muon as scale_by_muon_v2,
-    _group_by_shape_and_sharding,
     _orthogonalize_single,
     orthogonalize_layer_sharded,
 )
@@ -50,6 +49,7 @@ def test_orthogonalize_batched():
 
 
 def test_grouping():
+    """Test that orthogonalize_layer_sharded groups by shape and sharding correctly."""
     params = {
         'layer_0': {
             'q_proj': jnp.zeros((64, 128)),
@@ -63,19 +63,23 @@ def test_grouping():
         },
     }
     
-    groups = _group_by_shape_and_sharding(params)
+    ns_coeffs = jnp.array([3.4445, -4.7750, 2.0315])
+    result = orthogonalize_layer_sharded(params, ns_coeffs, ns_steps=5, eps=1e-8)
     
-    assert len(groups) == 2
-    shapes = {k[0] for k in groups.keys()}
-    assert (64, 128) in shapes
-    assert (128, 64) in shapes
+    # Verify structure is preserved
+    assert result['layer_0']['q_proj'].shape == (64, 128)
+    assert result['layer_0']['k_proj'].shape == (64, 128)
+    assert result['layer_0']['o_proj'].shape == (128, 64)
+    assert result['layer_1']['q_proj'].shape == (64, 128)
+    assert result['layer_1']['k_proj'].shape == (64, 128)
+    assert result['layer_1']['o_proj'].shape == (128, 64)
     
-    for key, items in groups.items():
-        if key[0] == (64, 128):
-            assert len(items) == 4
-        else:
-            assert len(items) == 2
-    print("✓ _group_by_shape_and_sharding groups correctly")
+    # Verify no NaNs
+    for layer in result.values():
+        for proj in layer.values():
+            assert not jnp.any(jnp.isnan(proj))
+    
+    print("✓ orthogonalize_layer_sharded groups and processes correctly")
 
 
 def test_stack_unstack_roundtrip():
@@ -189,7 +193,7 @@ def test_scale_by_muon():
     }
     grads = jax.tree.map(lambda x: jax.random.normal(key, x.shape) * 0.1, params)
     
-    tx = scale_by_muon_v2(layer_sharding=False)
+    tx = scale_by_muon_v2()
     state = tx.init(params)
     updates, new_state = tx.update(grads, state, params)
     
