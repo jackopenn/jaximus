@@ -317,7 +317,10 @@ def init_model_weights(
     
     embed_norm = None
     if config.post_embed_norm:
-        embed_norm = init_norm_weights(config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("model_embed",))
+        embed_norm = init_norm_weights(
+            config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias,
+            logical_axes=("model_embed",)
+        )
     
     layer_weights_list = []
     for _ in range(config.num_layers):
@@ -359,8 +362,14 @@ def init_model_weights(
         
         q_norm = k_norm = None
         if config.qk_norm:
-            q_norm = init_norm_weights(config.qk_norm_type, config.head_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("head_embed",))
-            k_norm = init_norm_weights(config.qk_norm_type, config.head_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("head_embed",))
+            q_norm = init_norm_weights(
+                config.qk_norm_type, config.head_dim, use_scale=config.norm_scale, use_bias=config.norm_bias,
+                logical_axes=("head_embed",)
+            )
+            k_norm = init_norm_weights(
+                config.qk_norm_type, config.head_dim, use_scale=config.norm_scale, use_bias=config.norm_bias,
+                logical_axes=("head_embed",)
+            )
         
         attention_weights = AttentionWeights(
             q_proj=q_proj, k_proj=k_proj, v_proj=v_proj, o_proj=o_proj,
@@ -420,8 +429,14 @@ def init_model_weights(
                 gate_bias=gate_bias, up_bias=up_bias, down_bias=down_bias,
             )
         
-        att_norm = init_norm_weights(config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("model_embed",))
-        mlp_norm = init_norm_weights(config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("model_embed",))
+        att_norm = init_norm_weights(
+            config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias,
+            logical_axes=("model_embed",)
+        )
+        mlp_norm = init_norm_weights(
+            config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias,
+            logical_axes=("model_embed",)
+        )
         
         layer_weights_list.append(LayerWeights(
             attention_weights=attention_weights,
@@ -432,7 +447,10 @@ def init_model_weights(
     
     lm_head_norm = None
     if config.pre_lm_head_norm:
-        lm_head_norm = init_norm_weights(config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias, logical_axes=("model_embed",))
+        lm_head_norm = init_norm_weights(
+            config.norm_type, config.hidden_dim, use_scale=config.norm_scale, use_bias=config.norm_bias,
+            logical_axes=("model_embed", "model_vocab")
+        )
     
     unembed = None
     lm_head_bias = None

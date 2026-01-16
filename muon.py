@@ -20,7 +20,7 @@ def _newton_schulz_iteration(x: jax.Array, coeffs: jax.Array) -> jax.Array:
     return coeffs[0] * x + b @ x
 
 
-def orthogonalize(x: jax.Array, ns_coeffs: jax.Array, ns_steps: int = 5, eps: float = 1e-8, *, out_sharding=None) -> jax.Array:
+def orthogonalize(x: jax.Array, ns_coeffs: jax.Array, ns_steps: int = 5, eps: float = 1e-8) -> jax.Array:
     transposed = x.shape[-2] > x.shape[-1]
     if transposed:
         x = x.swapaxes(-2, -1)
