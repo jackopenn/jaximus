@@ -37,18 +37,26 @@ from transformers import AutoTokenizer
 import wandb
 from data.hf import get_hf_dataset
 from generate import generate
-from modelling.model import forward, init_model_weights, make_config
 from modelling.layers.position import precompute_rope_embeddings
 from optimizer import make_optimizer, make_lr_schedule_fns, make_muon_momentum_schedule_fns
 from parallel import logical_to_physical, set_sharding_strategy
 from utils import DummyWandb, pretty_print_samples, MetricLogger
 
 
-def make_train_step(optimizer, model_config, model_weights, opt_weights):
+def get_model_module(model_type: str):
+    """Get the appropriate model module based on model type."""
+    if model_type == "canon":
+        from modelling.experimental.canon import model
+    else:
+        from modelling import model
+    return model
+
+
+def make_train_step(optimizer, model_config, model_weights, opt_weights, forward_fn):
     model_weights_sharding = jax.tree.map(lambda x: x.sharding, model_weights)
     opt_weights_sharding = jax.tree.map(lambda x: x.sharding, opt_weights)
     input_sharding = logical_to_physical(("batch", "seq"))
-    
+
     rope_cos, rope_sin = None, None
     if model_config.position_embedding_type == "rope":
         rope_cos, rope_sin = precompute_rope_embeddings(
@@ -56,9 +64,9 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights):
         )
         rope_cos = reshard(rope_cos, P())
         rope_sin = reshard(rope_sin, P())
-    
+
     def loss_fn(model_weights, x, y):
-        logits = forward(x, model_weights, model_config, rope_cos=rope_cos, rope_sin=rope_sin)
+        logits = forward_fn(x, model_weights, model_config, rope_cos=rope_cos, rope_sin=rope_sin)
         label_logits = jnp.take_along_axis(logits, y[..., jnp.newaxis], axis=-1)
         log_normalizers = jax.nn.logsumexp(logits, axis=-1, keepdims=True)
         loss = jnp.mean(log_normalizers - label_logits)
@@ -100,11 +108,13 @@ def train(cfg):
         num_proc=None,
     )
 
-    # set sharding strategy and init model 
+    # set sharding strategy and init model
     set_sharding_strategy(cfg.parallel.strategy)
-    model_config = make_config(cfg.model.to_dict())
+    model_type = getattr(cfg.model, "type", "base")
+    model_module = get_model_module(model_type)
+    model_config = model_module.make_config(cfg.model.to_dict())
     key = jax.random.PRNGKey(cfg.seed)
-    model_weights = init_model_weights(model_config, key)
+    model_weights = model_module.init_model_weights(model_config, key)
 
     # init optimizer
     tx, optimizer_config = make_optimizer(cfg)
@@ -172,7 +182,7 @@ def train(cfg):
     checkpoint_options = ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
     checkpoint_manager = ocp.CheckpointManager(checkpoint_dir, options=checkpoint_options)
 
-    train_step, input_sharding = make_train_step(tx, model_config, model_weights, opt_weights)
+    train_step, input_sharding = make_train_step(tx, model_config, model_weights, opt_weights, model_module.forward)
 
     train_iter = iter(dataset)
     step = 1
@@ -215,7 +225,7 @@ def train(cfg):
 
             # generate samples
             if step % cfg.generate_every == 0:
-                samples = generate(model_weights, model_config, tokenizer)
+                samples = generate(model_weights, model_config, tokenizer, model_module.forward)
                 if main_process:
                     pretty_print_samples(samples)
 

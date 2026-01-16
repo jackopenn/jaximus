@@ -1,15 +1,15 @@
 from functools import partial
+from typing import Callable
 import jax
 from jax import numpy as jnp
 from jax.sharding import PartitionSpec as P, reshard
 import numpy as np
 
 from parallel import logical_to_physical
-from modelling.model import forward, ModelWeights, ModelConfig
 from modelling.layers.position import precompute_rope_embeddings
 
 
-def _make_sample_batch(model_config: ModelConfig, rope_cos, rope_sin):
+def _make_sample_batch(model_config, rope_cos, rope_sin, forward_fn: Callable):
     """Create a JIT-compiled sampling function for the given config."""
     
     @partial(jax.jit, static_argnums=(2, 3, 4, 5))
@@ -33,7 +33,7 @@ def _make_sample_batch(model_config: ModelConfig, rope_cos, rope_sin):
             tokens, pos, key = carry
             key, subkey = jax.random.split(key)
             
-            logits = forward(tokens, weights, model_config, rope_cos=rope_cos, rope_sin=rope_sin)
+            logits = forward_fn(tokens, weights, model_config, rope_cos=rope_cos, rope_sin=rope_sin)
             logits = logits[:, pos, :].astype(jnp.float32) / temperature
             
             # Top-k filtering
@@ -58,9 +58,10 @@ def _make_sample_batch(model_config: ModelConfig, rope_cos, rope_sin):
 
 
 def generate(
-    weights: ModelWeights,
-    model_config: ModelConfig,
+    weights,
+    model_config,
     tokenizer,
+    forward_fn: Callable,
     prompts: list[str] = None,
     max_length: int = 64,
     n_samples: int = 5,
@@ -70,15 +71,16 @@ def generate(
 ) -> dict[str, list[str]] | None:
     """
     Generate text samples. Batches all prompts and shards across devices like training.
-    
+
     For multi-host: ALL processes must call this. Returns results only on main process.
-    
+
     Note: All prompts are padded to same length for efficient batched generation.
-    
+
     Args:
-        weights: ModelWeights for the model
-        model_config: ModelConfig for the model
+        weights: Model weights
+        model_config: Model config
         tokenizer: HuggingFace tokenizer
+        forward_fn: Forward function for the model
         prompts: List of prompt strings (uses defaults if None)
         max_length: Maximum total sequence length
         n_samples: Number of samples per prompt
@@ -178,7 +180,7 @@ def generate(
 
     # Create and call sampling function
     key = jax.random.PRNGKey(seed)
-    sample_fn = _make_sample_batch(model_config, rope_cos, rope_sin)
+    sample_fn = _make_sample_batch(model_config, rope_cos, rope_sin, forward_fn)
     generated = sample_fn(weights, tokens, max_prompt_len, gen_len, top_k, temperature, key)
     
     # Gather from all hosts

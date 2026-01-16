@@ -210,11 +210,24 @@ def make_optimizer(cfg):
             nesterov = require_val('nesterov')
             layer_sharding = require_val('layer_sharding')
 
+            # Get adamw defaults for fallback on non-2D params
+            adamw_defaults = type_defaults.get('adamw', {})
+            def require_adamw(key):
+                if key not in adamw_defaults:
+                    raise ValueError(f"Muon partition '{name}' requires cfg.optimizer.adamw.{key} for non-2D fallback")
+                return resolve(adamw_defaults[key])
+            adamw_b1 = require_adamw('b1')
+            adamw_b2 = require_adamw('b2')
+            adamw_weight_decay = require_adamw('weight_decay')
+
             partition_optimizers[name] = optax.inject_hyperparams(muon)(
                 learning_rate=schedule_fn,
                 nesterov=nesterov,
                 beta=beta_schedule,
                 layer_sharding=layer_sharding,
+                adamw_b1=adamw_b1,
+                adamw_b2=adamw_b2,
+                adamw_weight_decay=adamw_weight_decay,
             )
             resolved_partition.update({
                 "nesterov": nesterov,
