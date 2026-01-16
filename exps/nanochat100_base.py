@@ -45,20 +45,37 @@ def get_config():
     cfg.data.batch_size = 64
 
     # optimizer settings
-    cfg.optim.accum_steps = 4
-    cfg.optim.embed_lr = lambda: 0.3 * ((cfg.model.hidden_dim / 768) ** -0.5)
-    cfg.optim.lm_head_lr = lambda: 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
-    cfg.optim.other_lr = 0.02
-    cfg.optim.warmup_ratio = 0.0
-    cfg.optim.decay_ratio = 0.4
-    cfg.optim.grad_clip_norm = 1.0
-    cfg.optim.adamw_weight_decay = 0.0
-    cfg.optim.adamw_eps = 1e-10
-    cfg.optim.adamw_b1 = 0.8
-    cfg.optim.adamw_b2 = 0.95
+    cfg.optimizer.accum_steps = 4
+    cfg.optimizer.grad_clip_norm = 1.0
+    cfg.optimizer.decay_type = "linear"
+    cfg.optimizer.warmup_steps = 0
+    cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
 
-    max_steps = 10 * 3.82e9 // 524288
-    cfg.max_steps = max_steps
+    # adamw defaults
+    cfg.optimizer.adamw.weight_decay = 0.0
+    cfg.optimizer.adamw.eps = 1e-10
+    cfg.optimizer.adamw.b1 = 0.8
+    cfg.optimizer.adamw.b2 = 0.95
+
+    # muon defaults
+    cfg.optimizer.muon.nesterov = True
+    cfg.optimizer.muon.layer_sharding = True
+
+    # partitions
+    cfg.optimizer.embed.patterns = ["embed", "pos_embed"]
+    cfg.optimizer.embed.type = "adamw"
+    cfg.optimizer.embed.peak_lr = lambda: 0.3 * ((cfg.model.hidden_dim / 768) ** -0.5)
+
+    cfg.optimizer.unembed.patterns = ["unembed"]
+    cfg.optimizer.unembed.type = "adamw"
+    cfg.optimizer.unembed.peak_lr = lambda: 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
+
+    cfg.optimizer.other.patterns = "*"
+    cfg.optimizer.other.type = "muon"
+    cfg.optimizer.other.peak_lr = 0.02
+
+
+    cfg.max_steps = int(10 * 3.82e9 // 524288)
     cfg.generate_every = 500
     cfg.eval_every = -1
     cfg.checkpoint_every = 5000

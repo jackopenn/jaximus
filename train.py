@@ -109,7 +109,7 @@ def train(cfg):
     model_weights = init_model_weights(model_config, key)
 
     # init optimizer
-    tx = make_optimizer(cfg)
+    tx, optimizer_config = make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
     
     print("model_weights sharding:")
@@ -138,10 +138,15 @@ def train(cfg):
         print()
         
         # init logging
-        wandb_run = wandb.init(project="transformers", config=cfg.to_dict()) if cfg.wandb else DummyWandb()
+        cfg_dict = cfg.to_dict()
+        # Add resolved optimizer config
+        cfg_dict["optimizers_resolved"] = optimizer_config
+        wandb_run = wandb.init(project="transformers", config=cfg_dict) if cfg.wandb else DummyWandb()
+        accum_steps = _get_value(getattr(cfg.optimizer, 'accum_steps', None), 1)
+        
         train_logger = MetricLogger(
             batch_size=cfg.data.batch_size,
-            accum_steps=cfg.optim.accum_steps,
+            accum_steps=accum_steps,
             sequence_length=cfg.data.max_length,
             num_flops_per_token=num_flops_per_token,
             xpu_name=cfg.xpu,
@@ -187,29 +192,44 @@ def train(cfg):
 
         micro_step += 1
 
-        if micro_step % cfg.optim.accum_steps == 0:
+        accum_steps_val = cfg.optimizer.accum_steps() if callable(cfg.optimizer.accum_steps) else cfg.optimizer.accum_steps
+
+        if micro_step % accum_steps_val == 0:
             step_time = time.time() - t0
             t0 = time.time()
 
             # log metrics
             if main_process:
                 # Pure Python LR computation (no JAX, doesn't block TPU)
-                warmup_steps = cfg.optim.warmup_ratio * cfg.max_steps
-                decay_steps = cfg.optim.decay_ratio * cfg.max_steps
-                decay_start = cfg.max_steps - decay_steps
-                def py_lr(peak, s):
-                    if s < warmup_steps:
-                        return peak * s / max(warmup_steps, 1)
-                    elif s < decay_start:
-                        return peak
+                import math
+                lrs = {}
+                for partition_name, part_cfg in optimizer_config.items():
+                    peak_lr = part_cfg['peak_lr']
+                    warmup_steps = part_cfg.get('warmup_steps', 0)
+                    decay_steps = part_cfg.get('decay_steps', 0)
+                    decay_type = part_cfg.get('decay_type', 'linear')
+                    decay_start = cfg.max_steps - decay_steps
+                    opt_type = part_cfg['type']
+
+                    if warmup_steps or decay_steps:
+                        if step < warmup_steps:
+                            lr = peak_lr * step / max(warmup_steps, 1)
+                        elif step < decay_start:
+                            lr = peak_lr
+                        else:
+                            decay_pct = (step - decay_start) / max(decay_steps, 1)
+                            if decay_type == "cosine":
+                                lr = peak_lr * 0.5 * (1 + math.cos(math.pi * decay_pct))
+                            else:
+                                lr = peak_lr * (1 - decay_pct)
                     else:
-                        return peak * (1 - (s - decay_start) / max(decay_steps, 1))
-                lrs = {
-                    "embed_lr": py_lr(cfg.optim.embed_lr, step),
-                    "lm_head_lr": py_lr(cfg.optim.lm_head_lr, step),
-                    "other_lr": py_lr(cfg.optim.other_lr, step),
-                    "muon_lr": 0.85 + min(step / 300, 1.0) * 0.10,
-                }
+                        lr = peak_lr
+
+                    lrs[f"{partition_name}_lr"] = lr
+
+                    if opt_type == "muon":
+                        lrs[f"{partition_name}_muon_lr"] = 0.85 + min(step / 300, 1.0) * 0.10
+                
                 train_logger.log({
                     "loss": loss,
                     "grad_norm": grad_norm,
