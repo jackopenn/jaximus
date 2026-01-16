@@ -46,10 +46,12 @@ def warmup_stable_decay_schedule(
     return schedule
 
 
-def muon_momentum_schedule(step):
-    """Momentum schedule for Muon optimizer."""
-    frac = jnp.minimum(step / 300, 1.0)
-    return (1 - frac) * 0.85 + frac * 0.95
+def make_muon_momentum_schedule(start: float, end: float, warmup_steps: int):
+    """Create momentum schedule for Muon optimizer."""
+    def schedule(step):
+        frac = jnp.minimum(step / warmup_steps, 1.0)
+        return (1 - frac) * start + frac * end
+    return schedule
 
 
 # Reserved names for optimizer type defaults
@@ -187,13 +189,24 @@ def make_optimizer(cfg):
             })
 
         elif opt_type == "muon":
-            beta_raw = get_val('beta') or muon_momentum_schedule
-            if callable(beta_raw):
-                beta_schedule = beta_raw
-                beta_val = "schedule"
+            beta_raw = get_val('beta')
+            if beta_raw is not None:
+                if callable(beta_raw):
+                    beta_schedule = beta_raw
+                    beta_val = "schedule"
+                else:
+                    beta_schedule = lambda step, b=beta_raw: b
+                    beta_val = beta_raw
+                resolved_partition["beta"] = beta_val
             else:
-                beta_schedule = lambda step, b=beta_raw: b
-                beta_val = beta_raw
+                # Use configurable momentum schedule
+                momentum_start = get_val('momentum_start') or 0.85
+                momentum_end = get_val('momentum_end') or 0.95
+                momentum_warmup_steps = get_val('momentum_warmup_steps') or 300
+                beta_schedule = make_muon_momentum_schedule(momentum_start, momentum_end, momentum_warmup_steps)
+                resolved_partition["momentum_start"] = momentum_start
+                resolved_partition["momentum_end"] = momentum_end
+                resolved_partition["momentum_warmup_steps"] = momentum_warmup_steps
             nesterov = require_val('nesterov')
             layer_sharding = require_val('layer_sharding')
 
@@ -204,7 +217,6 @@ def make_optimizer(cfg):
                 layer_sharding=layer_sharding,
             )
             resolved_partition.update({
-                "beta": beta_val,
                 "nesterov": nesterov,
                 "layer_sharding": layer_sharding,
             })
@@ -254,3 +266,55 @@ def make_optimizer(cfg):
         tx = optax.MultiSteps(tx, every_k_schedule=accum_steps)
 
     return tx, resolved_config
+
+
+def make_lr_schedule_fns(optimizer_config: dict, max_steps: int) -> dict:
+    """Create pure Python LR schedule functions for logging."""
+    import math
+    schedule_fns = {}
+
+    for partition_name, part_cfg in optimizer_config.items():
+        peak_lr = part_cfg['peak_lr']
+        warmup_steps = part_cfg.get('warmup_steps', 0)
+        decay_steps = part_cfg.get('decay_steps', 0)
+        decay_type = part_cfg.get('decay_type', 'linear')
+        decay_start = max_steps - decay_steps
+
+        def make_schedule(peak_lr, warmup_steps, decay_steps, decay_start, decay_type):
+            def schedule(step):
+                if warmup_steps and step < warmup_steps:
+                    return peak_lr * step / max(warmup_steps, 1)
+                elif step < decay_start:
+                    return peak_lr
+                else:
+                    decay_pct = (step - decay_start) / max(decay_steps, 1)
+                    if decay_type == "cosine":
+                        return peak_lr * 0.5 * (1 + math.cos(math.pi * decay_pct))
+                    else:
+                        return peak_lr * (1 - decay_pct)
+            return schedule
+
+        schedule_fns[partition_name] = make_schedule(peak_lr, warmup_steps, decay_steps, decay_start, decay_type)
+
+    return schedule_fns
+
+
+def make_muon_momentum_schedule_fns(optimizer_config: dict) -> dict:
+    """Create pure Python muon momentum schedule functions for logging."""
+    schedule_fns = {}
+
+    for partition_name, part_cfg in optimizer_config.items():
+        if part_cfg.get('type') == 'muon':
+            start = part_cfg.get('momentum_start', 0.85)
+            end = part_cfg.get('momentum_end', 0.95)
+            warmup = part_cfg.get('momentum_warmup_steps', 300)
+
+            def make_schedule(start, end, warmup):
+                def schedule(step):
+                    frac = min(step / warmup, 1.0)
+                    return (1 - frac) * start + frac * end
+                return schedule
+
+            schedule_fns[partition_name] = make_schedule(start, end, warmup)
+
+    return schedule_fns

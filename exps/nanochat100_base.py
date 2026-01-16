@@ -60,6 +60,9 @@ def get_config():
     # muon defaults
     cfg.optimizer.muon.nesterov = True
     cfg.optimizer.muon.layer_sharding = True
+    cfg.optimizer.muon.momentum_start = 0.85
+    cfg.optimizer.muon.momentum_end = 0.95
+    cfg.optimizer.muon.momentum_warmup_steps = 300
 
     # partitions
     cfg.optimizer.embed.patterns = ["embed", "pos_embed"]

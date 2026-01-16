@@ -39,7 +39,7 @@ from data.hf import get_hf_dataset
 from generate import generate
 from modelling.model import forward, init_model_weights, make_config
 from modelling.layers.position import precompute_rope_embeddings
-from optimizer import make_optimizer
+from optimizer import make_optimizer, make_lr_schedule_fns, make_muon_momentum_schedule_fns
 from parallel import logical_to_physical, set_sharding_strategy
 from utils import DummyWandb, pretty_print_samples, MetricLogger
 
@@ -109,6 +109,8 @@ def train(cfg):
     # init optimizer
     tx, optimizer_config = make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
+    lr_schedule_fns = make_lr_schedule_fns(optimizer_config, cfg.max_steps)
+    muon_momentum_fns = make_muon_momentum_schedule_fns(optimizer_config)
     
     print("model_weights sharding:")
     print(f"embed: {jax.typeof(model_weights.embed)}")
@@ -140,7 +142,8 @@ def train(cfg):
         # Add resolved optimizer config
         cfg_dict["optimizers_resolved"] = optimizer_config
         wandb_run = wandb.init(project="transformers", config=cfg_dict) if cfg.wandb else DummyWandb()
-        accum_steps = _get_value(getattr(cfg.optimizer, 'accum_steps', None), 1)
+        accum_steps_raw = getattr(cfg.optimizer, 'accum_steps', 1)
+        accum_steps = accum_steps_raw() if callable(accum_steps_raw) else accum_steps_raw
         
         train_logger = MetricLogger(
             batch_size=cfg.data.batch_size,
@@ -198,42 +201,16 @@ def train(cfg):
 
             # log metrics
             if main_process:
-                # Pure Python LR computation (no JAX, doesn't block TPU)
-                import math
-                lrs = {}
-                for partition_name, part_cfg in optimizer_config.items():
-                    peak_lr = part_cfg['peak_lr']
-                    warmup_steps = part_cfg.get('warmup_steps', 0)
-                    decay_steps = part_cfg.get('decay_steps', 0)
-                    decay_type = part_cfg.get('decay_type', 'linear')
-                    decay_start = cfg.max_steps - decay_steps
-                    opt_type = part_cfg['type']
+                lrs = {f"{name}_lr": fn(step) for name, fn in lr_schedule_fns.items()}
+                muon_momentums = {f"{name}_momentum": fn(step) for name, fn in muon_momentum_fns.items()}
 
-                    if warmup_steps or decay_steps:
-                        if step < warmup_steps:
-                            lr = peak_lr * step / max(warmup_steps, 1)
-                        elif step < decay_start:
-                            lr = peak_lr
-                        else:
-                            decay_pct = (step - decay_start) / max(decay_steps, 1)
-                            if decay_type == "cosine":
-                                lr = peak_lr * 0.5 * (1 + math.cos(math.pi * decay_pct))
-                            else:
-                                lr = peak_lr * (1 - decay_pct)
-                    else:
-                        lr = peak_lr
-
-                    lrs[f"{partition_name}_lr"] = lr
-
-                    if opt_type == "muon":
-                        lrs[f"{partition_name}_muon_lr"] = 0.85 + min(step / 300, 1.0) * 0.10
-                
                 train_logger.log({
                     "loss": loss,
                     "grad_norm": grad_norm,
                     "step_time": step_time,
                     "step": step,
                     **lrs,
+                    **muon_momentums,
                 })
 
             # generate samples
@@ -243,24 +220,29 @@ def train(cfg):
                     pretty_print_samples(samples)
 
             # checkpoint
-            if step % cfg.checkpoint_every == 0:
+            if cfg.checkpoint_every > 0 and step % cfg.checkpoint_every == 0:
                 checkpoint_manager.save(step, args=ocp.args.StandardSave(model_weights))
                 checkpoint_manager.wait_until_finished() # must wait before logging to wandb
                 if main_process:
                     wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
 
             step += 1
-    
-    # final checkpoint (skip if last step was already checkpointed)
-    if cfg.max_steps % cfg.checkpoint_every != 0:
+
+    # final checkpoint (skip if last step was already checkpointed or checkpointing disabled)
+    if cfg.checkpoint_every > 0 and cfg.max_steps % cfg.checkpoint_every != 0:
         checkpoint_manager.save(int(cfg.max_steps), args=ocp.args.StandardSave(model_weights))
         checkpoint_manager.wait_until_finished() # must wait before logging to wandb
         if main_process:
             wandb_run.log_artifact(f"{checkpoint_dir}/{cfg.max_steps}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{cfg.max_steps}"])
-    
+
     if main_process:
         train_logger.flush()
         wandb_run.finish()
 
 if __name__ == "__main__":
     sws_run(train)
+    # Force exit to avoid hang from leaked multiprocessing semaphore in data loader
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

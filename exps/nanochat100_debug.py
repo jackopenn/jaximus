@@ -46,6 +46,7 @@ def get_config():
 
 
     # optimizer settings
+    cfg.optimizer.accum_steps = 1
     cfg.optimizer.grad_clip_norm = 1.0
     cfg.optimizer.warmup_steps = 0
     cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
@@ -60,6 +61,9 @@ def get_config():
     # muon defaults
     cfg.optimizer.muon.nesterov = True
     cfg.optimizer.muon.layer_sharding = True
+    cfg.optimizer.muon.momentum_start = 0.85
+    cfg.optimizer.muon.momentum_end = 0.95
+    cfg.optimizer.muon.momentum_warmup_steps = 300
 
     # partitions
     cfg.optimizer.embed.patterns = ["embed", "pos_embed"]
@@ -73,10 +77,10 @@ def get_config():
     cfg.optimizer.other.patterns = "*"
     cfg.optimizer.other.type = "muon"
     cfg.optimizer.other.peak_lr = 0.02
-    cfg.max_steps = 25_000
+    cfg.max_steps = 5
     cfg.generate_every = 10
     cfg.eval_every = -1
-    cfg.checkpoint_every = 5000
+    cfg.checkpoint_every = -1  # Disable checkpointing in debug
     cfg.checkpoint_dir = "checkpoints"
     cfg.xpu = "v4"
     cfg.wandb = False
