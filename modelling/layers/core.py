@@ -9,6 +9,14 @@ from modelling.layers.position import apply_rope
 from parallel import logical_to_physical
 
 
+def validate_enum(value, name: str, valid_values: tuple, allow_none: bool = False):
+    """Validate that value is in valid_values, raising ValueError if not."""
+    if allow_none and value is None:
+        return
+    if value not in valid_values:
+        raise ValueError(f"{name} must be one of {valid_values}, got: {value}")
+
+
 @jax.tree_util.register_dataclass
 @dataclass
 class RMSNormWeights:
@@ -81,6 +89,13 @@ def layer_norm(x: jax.Array, weights: LayerNormWeights, eps: float) -> jax.Array
     if weights.bias is not None:
         normalized = normalized + weights.bias
     return normalized.astype(x.dtype)
+
+
+def norm(x: jax.Array, weights: NormWeights, eps: float) -> jax.Array:
+    """Unified norm dispatch based on weights type."""
+    if isinstance(weights, RMSNormWeights):
+        return rms_norm(x, weights, eps)
+    return layer_norm(x, weights, eps)
 
 
 def resolve_act_fn(act_fn_name: str) -> Callable:

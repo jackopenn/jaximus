@@ -8,21 +8,21 @@ Jaximus is a JAX transformer implementation with configurable sharding for train
 
 ## Commands
 
-Use `uv` and the project venv to run all commands.
+Activate the venv before running commands: `source .venv/bin/activate`
 
 ### Training
 ```bash
 # Single-host training (uses sws-config for experiment configs)
-uv run python train.py --config exps/nanochat100_base.py
+python train.py --config exps/nanochat100_base.py
 
 # Multi-host training (set JAX_MULTIHOST=1 to initialize jax.distributed)
-JAX_MULTIHOST=1 uv run python train.py --config exps/nanochat100_base.py
+JAX_MULTIHOST=1 python train.py --config exps/nanochat100_base.py
 ```
 
 ### Validation
 ```bash
 # Quick validation run with debug config (small model, few steps)
-uv run python train.py --config exps/nanochat100_debug.py
+python train.py --config exps/nanochat100_debug.py
 ```
 
 ### Dependencies
