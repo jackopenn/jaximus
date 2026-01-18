@@ -42,6 +42,13 @@ class DummyWandb:
     def finish(self):
         pass
 
+class DummyLogger:
+    def log(self, *args, **kwargs):
+        pass
+    def flush(self):
+        pass
+
+
 class MetricLogger:
     def __init__(self, batch_size, accum_steps, sequence_length, num_flops_per_token, xpu_name, max_steps, wandb_run):
         self.num_flops_per_token = float(num_flops_per_token)

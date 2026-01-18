@@ -40,7 +40,7 @@ from generate import generate
 from modelling.layers.position import precompute_rope_embeddings
 from optimizer import make_optimizer, make_lr_schedule_fns, make_muon_momentum_schedule_fns
 from parallel import logical_to_physical, set_sharding_strategy
-from utils import DummyWandb, pretty_print_samples, MetricLogger
+from utils import DummyWandb, DummyLogger, pretty_print_samples, MetricLogger
 
 
 def get_model_module(model_type: str):
@@ -114,11 +114,11 @@ def train(cfg):
     model_module = get_model_module(model_type)
     model_config = model_module.make_config(cfg.model.to_dict())
     key = jax.random.PRNGKey(cfg.seed)
-    model_weights = model_module.init_model_weights(model_config, key)
+    model_weights = model_module.init_model_weights(model_config, key)  # type: ignore[arg-type]
 
     # init optimizer
     tx, optimizer_config = make_optimizer(cfg)
-    opt_weights = tx.init(model_weights)
+    opt_weights = tx.init(model_weights)  # type: ignore[arg-type]
     lr_schedule_fns = make_lr_schedule_fns(optimizer_config, cfg.max_steps)
     muon_momentum_fns = make_muon_momentum_schedule_fns(optimizer_config)
     
@@ -146,28 +146,30 @@ def train(cfg):
         print(f"{num_params=}")
         print(f"{num_flops_per_token=}")
         print()
-        
-        # init logging
-        cfg_dict = cfg.to_dict()
-        # Add resolved optimizer config
-        cfg_dict["optimizers_resolved"] = optimizer_config
-        wandb_run = wandb.init(project="transformers", config=cfg_dict) if cfg.wandb else DummyWandb()
-        accum_steps_raw = getattr(cfg.optimizer, 'accum_steps', 1)
-        accum_steps = accum_steps_raw() if callable(accum_steps_raw) else accum_steps_raw
-        
-        train_logger = MetricLogger(
-            batch_size=cfg.data.batch_size,
-            accum_steps=accum_steps,
-            sequence_length=cfg.data.max_length,
-            num_flops_per_token=num_flops_per_token,
-            xpu_name=cfg.xpu,
-            max_steps=cfg.max_steps,
-            wandb_run=wandb_run,
-        )
-        
-        # init profiler
+
+    # init logging
+    cfg_dict = cfg.to_dict()
+    cfg_dict["optimizers_resolved"] = optimizer_config
+    accum_steps_raw = getattr(cfg.optimizer, 'accum_steps', 1)
+    accum_steps = accum_steps_raw() if callable(accum_steps_raw) else accum_steps_raw
+
+    wandb_run = (wandb.init(project="transformers", config=cfg_dict) if cfg.wandb else DummyWandb()) if main_process else DummyWandb()
+    train_logger = MetricLogger(
+        batch_size=cfg.data.batch_size,
+        accum_steps=accum_steps,
+        sequence_length=cfg.data.max_length,
+        num_flops_per_token=num_flops_per_token,
+        xpu_name=cfg.xpu,
+        max_steps=cfg.max_steps,
+        wandb_run=wandb_run,
+    ) if main_process else DummyLogger()
+
+    # init profiler
+    if main_process:
         os.makedirs("profiles", exist_ok=True)
-        profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}" if main_process else None
+    profiler_options = None
+    if main_process:
         profiler_options = jax.profiler.ProfileOptions()
         profiler_options.host_tracer_level = 3
         if jax.default_backend() == "gpu":
@@ -193,17 +195,17 @@ def train(cfg):
         batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(input_sharding, x), batch)
 
         # train step (profile steps 10-20)
-        if main_process and micro_step == 10: 
+        if main_process and micro_step == 10 and profile_dir and profiler_options:
             jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
             model_weights, opt_weights, loss, grad_norm = train_step(model_weights, opt_weights, batch)
-        if main_process and micro_step == 20:
+        if main_process and micro_step == 20 and profile_dir:
             jax.profiler.stop_trace()
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")
 
         micro_step += 1
 
-        accum_steps_val = cfg.optimizer.accum_steps() if callable(cfg.optimizer.accum_steps) else cfg.optimizer.accum_steps
+        accum_steps_val: int = int(cfg.optimizer.accum_steps() if callable(cfg.optimizer.accum_steps) else cfg.optimizer.accum_steps)  # type: ignore[arg-type]
 
         if micro_step % accum_steps_val == 0:
             step_time = time.time() - t0
@@ -231,7 +233,7 @@ def train(cfg):
 
             # checkpoint
             if cfg.checkpoint_every > 0 and step % cfg.checkpoint_every == 0:
-                checkpoint_manager.save(step, args=ocp.args.StandardSave(model_weights))
+                checkpoint_manager.save(step, args=ocp.args.StandardSave(model_weights))  # type: ignore[call-arg]
                 checkpoint_manager.wait_until_finished() # must wait before logging to wandb
                 if main_process:
                     wandb_run.log_artifact(f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"])
@@ -240,7 +242,7 @@ def train(cfg):
 
     # final checkpoint (skip if last step was already checkpointed or checkpointing disabled)
     if cfg.checkpoint_every > 0 and cfg.max_steps % cfg.checkpoint_every != 0:
-        checkpoint_manager.save(int(cfg.max_steps), args=ocp.args.StandardSave(model_weights))
+        checkpoint_manager.save(int(cfg.max_steps), args=ocp.args.StandardSave(model_weights))  # type: ignore[call-arg]
         checkpoint_manager.wait_until_finished() # must wait before logging to wandb
         if main_process:
             wandb_run.log_artifact(f"{checkpoint_dir}/{cfg.max_steps}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{cfg.max_steps}"])
