@@ -1,5 +1,9 @@
 # pyright: reportArgumentType=false, reportOperatorIssue=false
+import argparse
+import importlib
 import os
+import time
+from datetime import datetime
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 
@@ -7,10 +11,6 @@ import jax
 
 if os.environ.get("JAX_MULTIHOST", "0") == "1":
     jax.distributed.initialize()
-
-import argparse
-import time
-from datetime import datetime
 
 import optax
 import orbax.checkpoint as ocp
@@ -24,7 +24,7 @@ from data.hf import get_hf_dataset
 from generate import generate
 from modelling.layers.position import precompute_rope_embeddings
 from parallel import l2p, set_sharding_strategy
-from utils import DummyLogger, DummyWandb, MetricLogger, pretty_print_samples
+from utils import DummyLogger, DummyWandb, MetricLogger, pretty_print_model, pretty_print_samples
 
 
 def make_train_step(optimizer, model_config, model_weights, opt_weights, forward_fn):
@@ -81,52 +81,37 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
 
     tx, optimizer_config, schedule_fns = make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
+    accum_steps = cfg.optimizer.accum_steps
 
-    print("model_weights sharding:")
-    print(f"embed: {jax.typeof(model_weights.embed)}")
-    print("layer_weights:\n    attention_weights:")
-    print(f"        q_proj: {jax.typeof(model_weights.layer_weights[0].attention_weights.q_proj)}")
-    print(f"        k_proj: {jax.typeof(model_weights.layer_weights[0].attention_weights.k_proj)}")
-    print(f"        v_proj: {jax.typeof(model_weights.layer_weights[0].attention_weights.v_proj)}")
-    print(f"        o_proj: {jax.typeof(model_weights.layer_weights[0].attention_weights.o_proj)}")
-    print("    mlp_weights:")
-    print(f"        up_proj: {jax.typeof(model_weights.layer_weights[0].mlp_weights.up_proj)}")
-    print(f"        down_proj: {jax.typeof(model_weights.layer_weights[0].mlp_weights.down_proj)}")
-    print(f"unembed: {jax.typeof(model_weights.unembed)}\n")
+    if main_process:
+        pretty_print_model(model_weights)
 
     num_params = sum(x.size for x in jax.tree_util.tree_leaves(model_weights))
     pos_embed = getattr(model_weights, "pos_embed", None)
     num_embed_params = model_weights.embed.size + (pos_embed.size if pos_embed is not None else 0)
-    num_flops_per_token = (
-        6 * (num_params - num_embed_params)
-        + model_config.num_layers
-        * 12
-        * model_config.num_attention_heads
-        * model_config.head_dim
-        * model_config.max_seq_len
+    L, N, H, S = (
+        model_config.num_layers,
+        model_config.num_attention_heads,
+        model_config.head_dim,
+        model_config.max_seq_len,
     )
+    num_flops_per_token = 6 * (num_params - num_embed_params) + L * 12 * N * H * S
     if main_process:
         print(f"{num_params=}\n{num_flops_per_token=}\n")
 
     cfg_dict = cfg.to_dict()
     cfg_dict["optimizers_resolved"] = optimizer_config
-    accum_steps_raw = getattr(cfg.optimizer, "accum_steps", 1)
-    accum_steps = accum_steps_raw() if callable(accum_steps_raw) else accum_steps_raw
 
-    wandb_run = (
-        (wandb.init(project="transformers", config=cfg_dict) if cfg.wandb else DummyWandb())
-        if main_process
-        else DummyWandb()
-    )
+    wandb_run = wandb.init(project="transformers", config=cfg_dict) if main_process and cfg.wandb else DummyWandb()
     train_logger = (
         MetricLogger(
-            batch_size=cfg.data.batch_size,
-            accum_steps=accum_steps,
-            sequence_length=cfg.data.max_length,
-            num_flops_per_token=num_flops_per_token,
-            xpu_name=cfg.xpu,
-            max_steps=cfg.max_steps,
-            wandb_run=wandb_run,
+            cfg.data.batch_size,
+            accum_steps,
+            cfg.data.max_length,
+            num_flops_per_token,
+            cfg.xpu,
+            cfg.max_steps,
+            wandb_run,
         )
         if main_process
         else DummyLogger()
@@ -147,7 +132,7 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
     checkpoint_dir = (
         cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
     )
-    if jax.process_index() == 0:
+    if main_process:
         os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_manager = ocp.CheckpointManager(
         checkpoint_dir, options=ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
@@ -169,11 +154,7 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")
 
         micro_step += 1
-        accum_steps_val = int(
-            cfg.optimizer.accum_steps() if callable(cfg.optimizer.accum_steps) else cfg.optimizer.accum_steps
-        )
-
-        if micro_step % accum_steps_val == 0:
+        if micro_step % accum_steps == 0:
             step_time, t0 = time.time() - t0, time.time()
 
             if main_process:
@@ -203,7 +184,7 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             step += 1
 
     if cfg.checkpoint_every > 0 and cfg.max_steps % cfg.checkpoint_every != 0:
-        checkpoint_manager.save(int(cfg.max_steps), args=ocp.args.StandardSave(model_weights))
+        checkpoint_manager.save(cfg.max_steps, args=ocp.args.StandardSave(model_weights))
         checkpoint_manager.wait_until_finished()
         if main_process:
             wandb_run.log_artifact(
@@ -224,8 +205,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Convert path to module: experiments/nanochat/config.py -> experiments.nanochat.config
-    import importlib
-
     exp_dir = os.path.dirname(args.config).replace("/", ".")
     config_module = args.config.replace("/", ".").removesuffix(".py")
 

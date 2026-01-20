@@ -31,6 +31,25 @@ def pretty_print_samples(samples):
         print()
 
 
+def pretty_print_model(weights, indent=0):
+    """Print model weight shapes/sharding. For lists, only prints first element."""
+    prefix = "    " * indent
+    if weights is None:
+        return
+    if hasattr(weights, "__dataclass_fields__"):
+        for name in weights.__dataclass_fields__:
+            val = getattr(weights, name)
+            if val is None:
+                continue
+            print(f"{prefix}{name}:")
+            pretty_print_model(val, indent + 1)
+    elif isinstance(weights, list) and len(weights) > 0:
+        print(f"{prefix}[0]:")
+        pretty_print_model(weights[0], indent + 1)
+    elif hasattr(weights, "shape"):
+        print(f"{prefix}{jax.typeof(weights)}")
+
+
 # https://github.com/karpathy/nanochat/blob/bc51da8baca66c54606bdd75c861c82ced90dcb0/nanochat/common.py#L183C1-L190C13
 class DummyWandb:
     def __init__(self):
