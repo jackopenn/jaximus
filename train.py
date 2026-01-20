@@ -208,15 +208,10 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
         wandb_run.finish()
 
 
-def get_experiment_fns(cfg):
+def main(cfg):
     model_module = importlib.import_module(f"{cfg.experiment}.model")
     optimizer_module = importlib.import_module(f"{cfg.experiment}.optimizer")
-    return model_module.init_model_weights, model_module.model_forward, optimizer_module.make_optimizer
-
-
-def main(cfg):
-    init_model_weights, model_forward, make_optimizer = get_experiment_fns(cfg)
-    train(cfg, init_model_weights, model_forward, make_optimizer)
+    train(cfg, model_module.init_model_weights, model_module.model_forward, optimizer_module.make_optimizer)
 
     import sys
     sys.stdout.flush()
