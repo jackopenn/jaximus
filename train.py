@@ -1,5 +1,4 @@
 # pyright: reportPossiblyUnboundVariable=false
-import argparse
 import importlib
 import os
 import time
@@ -17,6 +16,7 @@ import orbax.checkpoint as ocp
 from jax import numpy as jnp
 from jax.sharding import AxisType, reshard
 from jax.sharding import PartitionSpec as P
+from sws import run
 from transformers import AutoTokenizer
 
 import wandb
@@ -208,23 +208,21 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
         wandb_run.finish()
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="experiments/nanochat/config_debug.py")
-    args = parser.parse_args()
+def get_experiment_fns(cfg):
+    model_module = importlib.import_module(f"{cfg.experiment}.model")
+    optimizer_module = importlib.import_module(f"{cfg.experiment}.optimizer")
+    return model_module.init_model_weights, model_module.model_forward, optimizer_module.make_optimizer
 
-    # Convert path to module: experiments/nanochat/config.py -> experiments.nanochat.config
-    exp_dir = os.path.dirname(args.config).replace("/", ".")
-    config_module = args.config.replace("/", ".").removesuffix(".py")
 
-    cfg = importlib.import_module(config_module).get_config()
-    model_module = importlib.import_module(f"{exp_dir}.model")
-    optimizer_module = importlib.import_module(f"{exp_dir}.optimizer")
-
-    train(cfg, model_module.init_model_weights, model_module.model_forward, optimizer_module.make_optimizer)
+def main(cfg):
+    init_model_weights, model_forward, make_optimizer = get_experiment_fns(cfg)
+    train(cfg, init_model_weights, model_forward, make_optimizer)
 
     import sys
-
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)
+
+
+if __name__ == "__main__":
+    run(main)

@@ -5,6 +5,7 @@ from sws import Config as Config
 def get_config():
     """Debug config for local testing."""
     cfg = Config()
+    cfg.experiment = "experiments.canon"
     cfg.seed = 42
     cfg.exp_name = "canon100-debug"
 
@@ -50,4 +51,4 @@ def get_config():
     cfg.parallel.strategy = "dp"
     cfg.parallel.data = 1
 
-    return cfg.finalize()
+    return cfg

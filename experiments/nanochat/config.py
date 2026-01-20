@@ -5,6 +5,7 @@ from sws import Config
 def get_config():
     """Base config. Hardcodes: no bias, MLP, RMSNorm pre-norm, RoPE, QK norm, softcap=15, relu_squared, bf16."""
     cfg = Config()
+    cfg.experiment = "experiments.nanochat"
     cfg.seed = 42
     cfg.exp_name = "nanochat100-base"
 
@@ -41,8 +42,9 @@ def get_config():
     cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat100-we-go-again"
     cfg.xpu = "v4"
     cfg.wandb = True
+    cfg.wandb_project = "nanochat"
 
     cfg.parallel.strategy = "fsdp"
     cfg.parallel.data = 16
 
-    return cfg.finalize()
+    return cfg

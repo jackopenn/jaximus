@@ -4,6 +4,7 @@ from sws import Config
 
 def get_config():
     cfg = Config()
+    cfg.experiment = "experiments.canon"
     cfg.seed = 42
     cfg.exp_name = "nanochat-canon"
 
@@ -49,4 +50,4 @@ def get_config():
     cfg.parallel.strategy = "fsdp"
     cfg.parallel.data = 16
 
-    return cfg.finalize()
+    return cfg

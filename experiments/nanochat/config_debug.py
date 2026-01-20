@@ -5,6 +5,7 @@ from sws import Config as Config
 def get_config():
     """Debug config for local testing."""
     cfg = Config()
+    cfg.experiment = "experiments.nanochat"
     cfg.seed = 42
     cfg.exp_name = "nanochat100-debug"
 
@@ -41,8 +42,9 @@ def get_config():
     cfg.checkpoint_dir = "checkpoints"
     cfg.xpu = "v4"
     cfg.wandb = False
+    cfg.wandb_project = "nanochat"
 
     cfg.parallel.strategy = "dp"
     cfg.parallel.data = 1
 
-    return cfg.finalize()
+    return cfg
