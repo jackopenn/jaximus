@@ -1,6 +1,6 @@
-import jax
-from jax import numpy as jnp
 import grain
+import jax
+
 
 def get_dummy_dataset(max_length: int, batch_size: int):
     batch = (
@@ -15,7 +15,7 @@ def get_dummy_dataset(max_length: int, batch_size: int):
             (max_length,),
             0,
             max_length,
-        )
+        ),
     )
 
     return grain.MapDataset.source(batch).to_iter_dataset().batch(batch_size)

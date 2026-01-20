@@ -28,7 +28,7 @@ SHARDING_RULES = {
 _current_rules = SHARDING_RULES["dp"]
 
 
-def set_sharding_strategy(strategy: str):
+def set_sharding_strategy(strategy):
     """Sets the sharding strategy by name ('dp' or 'fsdp')."""
     global _current_rules
     if strategy not in SHARDING_RULES:
@@ -36,6 +36,6 @@ def set_sharding_strategy(strategy: str):
     _current_rules = SHARDING_RULES[strategy]
 
 
-def logical_to_physical(logical_axes):
+def l2p(logical_axes):
     """Convert logical axes to physical PartitionSpec using current rules."""
     return P(*[_current_rules.get(axis) for axis in logical_axes])

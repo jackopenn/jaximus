@@ -1,4 +1,6 @@
+# pyright: reportAttributeAccessIssue=false
 from sws import Config
+
 
 def gpt2_small():
     cfg = Config()
@@ -13,8 +15,8 @@ def gpt2_small():
     cfg.norm_type = "layer"
     cfg.norm_position = "pre"
     cfg.norm_epsilon = 1e-5
-    cfg.norm_scale = True   # RMSNorm: optional. LayerNorm: always True (ignored)
-    cfg.norm_bias = False   # RMSNorm: always False (ignored). LayerNorm: optional
+    cfg.norm_scale = True  # RMSNorm: optional. LayerNorm: always True (ignored)
+    cfg.norm_bias = False  # RMSNorm: always False (ignored). LayerNorm: optional
     cfg.mlp_type = "mlp"
     cfg.act_fn = "gelu"
     cfg.attn_use_bias = False

@@ -5,7 +5,6 @@ An opinionated, explicit, and functional JAX library for model experimentation.
 ## Setup
 
 ```bash
-# Clone and install
 git clone <repo> && cd jaximus
 uv venv && source .venv/bin/activate
 uv pip install -e ".[tpu]"  # or [gpu] or [cpu]
@@ -14,12 +13,23 @@ uv pip install -e ".[tpu]"  # or [gpu] or [cpu]
 ## Usage
 
 ```bash
-python train.py --config exps/nanochat100_base.py
+python train.py --config experiments/nanochat/config.py
 ```
 
-## Configuration
+## Creating Experiments
 
-Experiments are Python files in `exps/` that return a `Config` object. Values can be constants or lambdas for derived values:
+Each experiment is a self-contained directory under `experiments/` with 3 required files:
+
+```
+experiments/
+└── my_experiment/
+    ├── __init__.py
+    ├── config.py      # get_config() -> Config
+    ├── model.py       # init_model_weights(), model_forward()
+    └── optimizer.py   # make_optimizer()
+```
+
+### config.py
 
 ```python
 from sws import Config
@@ -27,35 +37,49 @@ from sws import Config
 def get_config():
     cfg = Config()
     cfg.seed = 42
+    cfg.exp_name = "my-experiment"
 
-    # Model
     cfg.model.num_layers = 20
-    cfg.model.hidden_dim = lambda: cfg.model.num_layers * 64
-    cfg.model.num_attention_heads = lambda: cfg.model.hidden_dim // 128
+    cfg.model.hidden_dim = lambda: cfg.model.num_layers * 64  # derived values
 
-    # Data
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-100BT"]
     cfg.data.batch_size = 64
 
-    # Optimizer (partitioned by parameter name)
-    cfg.optimizer.embed.patterns = ["embed", "pos_embed"]
-    cfg.optimizer.embed.type = "adamw"
+    cfg.optimizer.warmup_steps = 0
+    cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
     cfg.optimizer.embed.peak_lr = 0.01
-
-    cfg.optimizer.other.patterns = "*"
-    cfg.optimizer.other.type = "muon"
     cfg.optimizer.other.peak_lr = 0.02
 
-    # Training
     cfg.max_steps = 10000
     cfg.parallel.strategy = "fsdp"  # or "dp"
     cfg.parallel.data = 16
 
-    return cfg
+    return cfg.finalize()
 ```
 
-Override any value from the command line:
+### model.py
 
-```bash
-python train.py --config exps/nanochat100_base.py --model.num_layers 12 --data.batch_size 32
+```python
+def init_model_weights(config, key):
+    """Initialize model weights. Returns a pytree of arrays."""
+    ...
+
+def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):
+    """Forward pass. Returns logits."""
+    ...
+```
+
+### optimizer.py
+
+```python
+def make_optimizer(cfg):
+    """Create optimizer. Returns (optax_tx, config_for_logging, schedule_fns_for_logging)."""
+    tx = ...  # optax optimizer
+    resolved_config = {...}  # dict of optimizer settings for logging
+    schedule_fns = {  # pure Python schedule functions for logging
+        "lr_embed": lambda step: ...,
+        "lr_other": lambda step: ...,
+        "momentum_other": lambda step: ...,
+    }
+    return tx, resolved_config, schedule_fns
 ```

@@ -1,8 +1,10 @@
 import grain
 import jax
-from data.grain_transforms import Tokenize, Shift
 from datasets import load_dataset
 from transformers import AutoTokenizer
+
+from data.grain_transforms import Shift, Tokenize
+
 
 class HFStreamingDataSource(grain.sources.RandomAccessDataSource):
     def __init__(self, iterable_ds):
@@ -33,18 +35,13 @@ def get_hf_dataset(
     if streaming:
         num_proc = None
 
-    hf_ds = (
-        load_dataset(*hf_name, split="train", streaming=streaming, num_proc=num_proc)
-        .shard(
-            num_shards=jax.process_count(), 
-            index=jax.process_index()
-        )
+    hf_ds = load_dataset(*hf_name, split="train", streaming=streaming, num_proc=num_proc).shard(
+        num_shards=jax.process_count(), index=jax.process_index()
     )
 
-    source = HFStreamingDataSource(hf_ds) if streaming else hf_ds 
-    ds = (
-        grain.MapDataset.source(source)
-        .to_iter_dataset(read_options=grain.ReadOptions(num_threads=1 if streaming else 16))
+    source = HFStreamingDataSource(hf_ds) if streaming else hf_ds
+    ds = grain.MapDataset.source(source).to_iter_dataset(
+        read_options=grain.ReadOptions(num_threads=1 if streaming else 16)
     )
 
     # if no tokenizer, assume already tokenized

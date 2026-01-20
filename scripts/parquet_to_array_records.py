@@ -1,12 +1,12 @@
-from transformers import AutoTokenizer
-import pickle
-from array_record.python.array_record_module import ArrayRecordWriter
-import multiprocessing as mp
-from tqdm import tqdm
-import os
 import argparse
-import pyarrow.parquet as pq
+import multiprocessing as mp
+import os
+import pickle
 
+import pyarrow.parquet as pq
+from array_record.python.array_record_module import ArrayRecordWriter
+from tqdm import tqdm
+from transformers import AutoTokenizer
 
 GLOBAL_TOKENIZER = None
 
@@ -59,7 +59,9 @@ if __name__ == "__main__":
     parser.add_argument("--input_dir", type=str, required=True, help="Directory containing parquet files")
     parser.add_argument("--text_column", type=str, default="text", help="Name of the text column (default: text)")
     parser.add_argument("--tokenizer", type=str, default="gpt2", help="Tokenizer name or path (default: gpt2)")
-    parser.add_argument("--num_procs", type=int, default=None, help="Number of processes to use (default: cpu_count - 1)")
+    parser.add_argument(
+        "--num_procs", type=int, default=None, help="Number of processes to use (default: cpu_count - 1)"
+    )
     parser.add_argument("--output_path", type=str, default=None, help="Output directory for ArrayRecords")
     parser.add_argument("--batch_size", type=int, default=8192, help="Parquet read batch size (default: 8192)")
 
@@ -76,10 +78,7 @@ if __name__ == "__main__":
     if len(files) == 0:
         raise FileNotFoundError(f"No .parquet files found in {args.input_dir}")
 
-    pool_args = [
-        (idx, f, args.output_path, args.text_column, args.batch_size)
-        for idx, f in enumerate(files)
-    ]
+    pool_args = [(idx, f, args.output_path, args.text_column, args.batch_size) for idx, f in enumerate(files)]
 
     results = []
     with mp.Pool(args.num_procs, initializer=_init_worker, initargs=(args.tokenizer,)) as pool:
