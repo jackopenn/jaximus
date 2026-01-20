@@ -45,6 +45,7 @@ def get_config():
     cfg.checkpoint_dir = "checkpoints"
     cfg.xpu = "v4"
     cfg.wandb = False
+    cfg.wandb_project = "canon"
 
     cfg.parallel.strategy = "dp"
     cfg.parallel.data = 1

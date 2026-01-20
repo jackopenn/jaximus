@@ -57,7 +57,7 @@ def canon_layer(x, weights):
 
 
 def _init_weight(key, init_fn, shape, sharding):
-    return init_fn(key, shape, dtype=jnp.float32, out_sharding=l2p(sharding))
+    return init_fn(key, shape, dtype=jnp.float32, out_sharding=None if sharding is None else l2p(sharding))
 
 
 def _init_canon_weights(dim, sharding, key):
@@ -75,12 +75,12 @@ def _init_canon_block_weights(config, key):
     D, N, K, H, I = config.hidden_dim, config.num_attention_heads, config.num_key_value_heads, config.head_dim, config.intermediate_dim
     keys = iter(jax.random.split(key, 6))
     return CanonBlockWeights(
-        canon_a=_init_canon_weights(D, ("model_embed",), next(keys)) if config.canon_a else None,
-        canon_b_q=_init_canon_weights(N * H, ("model_q",), next(keys)) if config.canon_b else None,
-        canon_b_k=_init_canon_weights(K * H, ("model_kv",), next(keys)) if config.canon_b else None,
-        canon_b_v=_init_canon_weights(K * H, ("model_kv",), next(keys)) if config.canon_b else None,
-        canon_c=_init_canon_weights(D, ("model_embed",), next(keys)) if config.canon_c else None,
-        canon_d=_init_canon_weights(I, ("model_intermediate",), next(keys)) if config.canon_d else None,
+        canon_a=_init_canon_weights(D, None, next(keys)) if config.canon_a else None,
+        canon_b_q=_init_canon_weights(N * H, None, next(keys)) if config.canon_b else None,
+        canon_b_k=_init_canon_weights(K * H, None, next(keys)) if config.canon_b else None,
+        canon_b_v=_init_canon_weights(K * H, None, next(keys)) if config.canon_b else None,
+        canon_c=_init_canon_weights(D, None, next(keys)) if config.canon_c else None,
+        canon_d=_init_canon_weights(I, None, next(keys)) if config.canon_d else None,
     )
 
 
