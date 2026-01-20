@@ -25,8 +25,6 @@
 
 ### Commands
 - `source .venv/bin/activate` before running
-- `ruff format .` - auto-format code
-- `ruff check --fix .` - lint and auto-fix
 - `python train.py --config experiments/nanochat/config_debug.py` - quick validation
 - `python train.py --config experiments/nanochat/config.py` - full training
 

@@ -1,4 +1,4 @@
-# pyright: reportArgumentType=false, reportOperatorIssue=false
+# pyright: reportPossiblyUnbound=false
 import argparse
 import importlib
 import os
@@ -24,7 +24,7 @@ from data.hf import get_hf_dataset
 from generate import generate
 from modelling.layers.position import precompute_rope_embeddings
 from parallel import l2p, set_sharding_strategy
-from utils import DummyLogger, DummyWandb, MetricLogger, pretty_print_model, pretty_print_samples
+from utils import DummyWandb, MetricLogger, pretty_print_model, pretty_print_samples
 
 
 def make_train_step(optimizer, model_config, model_weights, opt_weights, forward_fn):
@@ -102,9 +102,17 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
     cfg_dict = cfg.to_dict()
     cfg_dict["optimizers_resolved"] = optimizer_config
 
-    wandb_run = wandb.init(project="transformers", config=cfg_dict) if main_process and cfg.wandb else DummyWandb()
-    train_logger = (
-        MetricLogger(
+    checkpoint_dir = cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
+    checkpoint_manager = ocp.CheckpointManager(
+        checkpoint_dir,
+        options=ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
+    )
+    
+    if main_process:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        wandb_run = wandb.init(project="transformers", config=cfg_dict) if cfg.wandb else DummyWandb()
+        train_logger = MetricLogger(
             cfg.data.batch_size,
             accum_steps,
             cfg.data.max_length,
@@ -113,15 +121,9 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             cfg.max_steps,
             wandb_run,
         )
-        if main_process
-        else DummyLogger()
-    )
 
-    if main_process:
         os.makedirs("profiles", exist_ok=True)
-    profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}" if main_process else None
-    profiler_options = None
-    if main_process:
+        profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         profiler_options = jax.profiler.ProfileOptions()
         profiler_options.host_tracer_level = 3
         if jax.default_backend() == "gpu":
@@ -129,14 +131,6 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             profiler_options.gpu_enable_cupti_activity_graph_trace = True
             profiler_options.gpu_dump_graph_node_mapping = True
 
-    checkpoint_dir = (
-        cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
-    )
-    if main_process:
-        os.makedirs(checkpoint_dir, exist_ok=True)
-    checkpoint_manager = ocp.CheckpointManager(
-        checkpoint_dir, options=ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
-    )
 
     train_step, input_sharding = make_train_step(tx, model_config, model_weights, opt_weights, model_forward)
 
@@ -145,11 +139,11 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
     while step <= cfg.max_steps:
         batch = jax.tree.map(lambda x: jax.make_array_from_process_local_data(input_sharding, x), next(train_iter))
 
-        if main_process and micro_step == 10 and profile_dir and profiler_options:
+        if main_process and micro_step == 10:
             jax.profiler.start_trace(profile_dir, profiler_options=profiler_options)
         with jax.profiler.StepTraceAnnotation("train", step_num=step):
             model_weights, opt_weights, loss, grad_norm = train_step(model_weights, opt_weights, batch)
-        if main_process and micro_step == 20 and profile_dir:
+        if main_process and micro_step == 20:
             jax.profiler.stop_trace()
             wandb_run.log_artifact(f"{os.getcwd()}/{profile_dir}/", name=f"{wandb_run.id}_profile", type="profile")
 
