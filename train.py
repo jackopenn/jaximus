@@ -1,4 +1,4 @@
-# pyright: reportPossiblyUnbound=false
+# pyright: reportPossiblyUnboundVariable=false
 import argparse
 import importlib
 import os
@@ -59,12 +59,15 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights, forward
 
 
 def train(cfg, init_model_weights, model_forward, make_optimizer):
+    # init mesh 
     mesh = jax.make_mesh((cfg.parallel.data,), ("data",), (AxisType.Explicit,))
     jax.set_mesh(mesh)
     main_process = jax.process_index() == 0
     if main_process:
         print(f"{mesh=}\n")
 
+
+    # init tokenizer and dataset
     tokenizer = AutoTokenizer.from_pretrained(cfg.data.tokenizer_name)
     dataset = get_hf_dataset(
         hf_name=cfg.data.hf_name,
@@ -75,17 +78,19 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
         num_proc=None,
     )
 
+    
+    # init sharding strategy, model and optimizer
     set_sharding_strategy(cfg.parallel.strategy)
     model_config = cfg.model
     model_weights = init_model_weights(model_config, jax.random.PRNGKey(cfg.seed))
-
     tx, optimizer_config, schedule_fns = make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
     accum_steps = cfg.optimizer.accum_steps
-
     if main_process:
         pretty_print_model(model_weights)
 
+
+    # calculate num_flops_per_token for mfu
     num_params = sum(x.size for x in jax.tree_util.tree_leaves(model_weights))
     pos_embed = getattr(model_weights, "pos_embed", None)
     num_embed_params = model_weights.embed.size + (pos_embed.size if pos_embed is not None else 0)
@@ -99,19 +104,13 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
     if main_process:
         print(f"{num_params=}\n{num_flops_per_token=}\n")
 
+
+    # init wandb and logger 
     cfg_dict = cfg.to_dict()
     cfg_dict["optimizers_resolved"] = optimizer_config
-
-    checkpoint_dir = cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
-    checkpoint_manager = ocp.CheckpointManager(
-        checkpoint_dir,
-        options=ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
-    )
-    
     if main_process:
-        os.makedirs(checkpoint_dir, exist_ok=True)
-
-        wandb_run = wandb.init(project="transformers", config=cfg_dict) if cfg.wandb else DummyWandb()
+        project_name = cfg.wandb_project if cfg.wandb_project else "transformers"
+        wandb_run = wandb.init(project=project_name, config=cfg_dict) if cfg.wandb else DummyWandb()
         train_logger = MetricLogger(
             cfg.data.batch_size,
             accum_steps,
@@ -121,7 +120,20 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             cfg.max_steps,
             wandb_run,
         )
+    
 
+    # init checkpoint manager
+    checkpoint_dir = cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
+    if main_process:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_manager = ocp.CheckpointManager(
+        checkpoint_dir,
+        options=ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
+    )
+    
+
+    # init profiler
+    if main_process:
         os.makedirs("profiles", exist_ok=True)
         profile_dir = f"profiles/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         profiler_options = jax.profiler.ProfileOptions()
@@ -132,6 +144,8 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             profiler_options.gpu_dump_graph_node_mapping = True
 
 
+
+    # make jit train step
     train_step, input_sharding = make_train_step(tx, model_config, model_weights, opt_weights, model_forward)
 
     train_iter = iter(dataset)
@@ -177,6 +191,7 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
 
             step += 1
 
+    # checkpoint at max steps (ignore if we just did on last step)
     if cfg.checkpoint_every > 0 and cfg.max_steps % cfg.checkpoint_every != 0:
         checkpoint_manager.save(cfg.max_steps, args=ocp.args.StandardSave(model_weights))
         checkpoint_manager.wait_until_finished()
