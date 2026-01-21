@@ -180,10 +180,10 @@ def forward_model(forward_fn, weights, config, input_ids, rope_cos, rope_sin):
     losses = optax.softmax_cross_entropy_with_integer_labels(logits, target_ids)
     predictions = jnp.argmax(logits, axis=-1)
 
-    # Slice back to original batch size
+    # Reshard to replicated and slice back to original batch size
     if batch_size < mesh_size:
-        losses = losses[:batch_size]
-        predictions = predictions[:batch_size]
+        losses = reshard(losses, P(None, None))[:batch_size]
+        predictions = reshard(predictions, P(None, None))[:batch_size]
 
     return losses, predictions
 
