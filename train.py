@@ -195,9 +195,9 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
                     model_weights, model_config, model_forward, tokenizer, cfg.eval_data_path, cfg.eval_max_per_task, cfg.eval_batch_size
                 )
                 if main_process:
-                    wandb_run.log({f"eval/{k}": v for k, v in eval_results["results"].items()})
-                    wandb_run.log({f"eval/centered_{k}": v for k, v in eval_results["centered_results"].items()})
-                    wandb_run.log({"eval/core_metric": eval_results["core_metric"]})
+                    wandb_run.log({f"eval/{k}": v for k, v in eval_results["results"].items()}, step=step)
+                    wandb_run.log({f"eval/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=step)
+                    wandb_run.log({"eval/core_metric": eval_results["core_metric"]}, step=step)
 
             step += 1
 
