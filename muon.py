@@ -137,33 +137,17 @@ def muon(
     weight_decay=0.0,
     nesterov=True,
     layer_sharding=True,
-    adamw_b1=0.9,
-    adamw_b2=0.999,
-    adamw_weight_decay=0.0,
 ):
-    """Muon optimizer with AdamW fallback for non-2D parameters."""
-    return optax.partition(
-        transforms={
-            "muon": optax.chain(
-                scale_by_muon(
-                    ns_coeffs=ns_coeffs,
-                    ns_steps=ns_steps,
-                    beta=beta,
-                    eps=eps,
-                    nesterov=nesterov,
-                    layer_sharding=layer_sharding,
-                ),
-                transform.add_decayed_weights(weight_decay),
-                transform.scale_by_learning_rate(learning_rate),
-            ),
-            "adamw": optax.adamw(
-                learning_rate=learning_rate,
-                b1=adamw_b1,
-                b2=adamw_b2,
-                eps=eps,
-                weight_decay=adamw_weight_decay,
-                nesterov=nesterov,
-            ),
-        },
-        param_labels=lambda params: jax.tree.map(lambda p: "muon" if p.ndim == 2 else "adamw", params),
+    """Muon optimizer."""
+    return optax.chain(
+        scale_by_muon(
+            ns_coeffs=ns_coeffs,
+            ns_steps=ns_steps,
+            beta=beta,
+            eps=eps,
+            nesterov=nesterov,
+            layer_sharding=layer_sharding,
+        ),
+        transform.add_decayed_weights(weight_decay),
+        transform.scale_by_learning_rate(learning_rate),
     )

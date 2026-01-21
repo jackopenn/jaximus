@@ -21,8 +21,12 @@ def make_optimizer(cfg):
         def route_path(path, _):
             if len(path) == 0:
                 return "other"
-            name = path[0].name
-            return "embed" if name in ("embed", "pos_embed") else "unembed" if name == "unembed" else "other"
+            names = [getattr(k, "name", getattr(k, "key", None)) for k in path]
+            if "embed" in names or "pos_embed" in names:
+                return "embed"
+            if "unembed" in names or "canon" in names:
+                return "unembed"
+            return "other"
 
         return jax.tree.map_with_path(route_path, state)
 
@@ -41,9 +45,6 @@ def make_optimizer(cfg):
                     nesterov=True,
                     layer_sharding=True,
                     beta=muon_momentum_schedule(opt.momentum_start, opt.momentum_end, opt.momentum_warmup_steps),
-                    adamw_b1=0.8,
-                    adamw_b2=0.95,
-                    adamw_weight_decay=0.0,
                 ),
             },
             router,
