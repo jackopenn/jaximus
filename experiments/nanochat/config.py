@@ -35,13 +35,13 @@ def get_config():
     cfg.optimizer.unembed.peak_lr = lambda: 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
     cfg.optimizer.other.peak_lr = 0.02
 
-    cfg.max_steps = int(10 * 3.82e9 // 524288)
+    cfg.max_steps = int(3.82e9 // 524288)
     cfg.generate_every = 500
-    cfg.eval_every = -1
+    cfg.eval_every = 10
     cfg.eval_max_per_task = -1
     cfg.eval_data_path = "cache"
     cfg.checkpoint_every = 5000
-    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat100-we-go-again"
+    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat-base-core"
     cfg.xpu = "v4"
     cfg.wandb = True
     cfg.wandb_project = "nanochat"
