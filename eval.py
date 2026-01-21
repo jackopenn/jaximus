@@ -166,11 +166,25 @@ def batch_sequences_lm(tokenizer, prompts, bos_token_id):
 
 
 def forward_model(forward_fn, weights, config, input_ids, rope_cos, rope_sin):
-    """Run model forward, return losses and predictions."""
+    """Run model forward, return losses and predictions. Pads batch to mesh size if needed."""
+    batch_size = input_ids.shape[0]
+    mesh_size = jax.device_count()
+
+    # Pad batch to mesh size if smaller (model forward has batch-sharded outputs)
+    if batch_size < mesh_size:
+        pad_size = mesh_size - batch_size
+        input_ids = jnp.pad(input_ids, [(0, pad_size), (0, 0)], constant_values=0)
+
     logits = forward_fn(input_ids, weights, config, rope_cos=rope_cos, rope_sin=rope_sin)
     target_ids = jnp.roll(input_ids, -1, axis=-1)
     losses = optax.softmax_cross_entropy_with_integer_labels(logits, target_ids)
     predictions = jnp.argmax(logits, axis=-1)
+
+    # Slice back to original batch size
+    if batch_size < mesh_size:
+        losses = losses[:batch_size]
+        predictions = predictions[:batch_size]
+
     return losses, predictions
 
 
