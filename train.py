@@ -196,7 +196,7 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
                 )
                 if main_process:
                     wandb_run.log({f"eval/{k}": v for k, v in eval_results["results"].items()})
-                    wandb_run.log({f"eval_centered/{k}": v for k, v in eval_results["centered_results"].items()})
+                    wandb_run.log({f"eval/centered_{k}": v for k, v in eval_results["centered_results"].items()})
                     wandb_run.log({"eval/core_metric": eval_results["core_metric"]})
 
             step += 1
