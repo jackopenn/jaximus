@@ -244,7 +244,7 @@ def prepare_batch(data, indices, tokenizer, task_meta, bos_token_id, max_seq_len
     }
 
 
-def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len):
+def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_size):
     """Evaluate a batch and return list of is_correct per example."""
     tokens = batch["tokens"]
     start_idxs = batch["start_idxs"]
@@ -257,7 +257,7 @@ def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len):
         return []
 
     input_ids = stack_sequences(tokens, pad_token_id)
-    losses, predictions = forward_model(eval_step_fn, input_ids, max_seq_len)
+    losses, predictions = forward_model(eval_step_fn, input_ids, max_seq_len, eval_batch_size)
 
     results = []
     row_offset = 0
@@ -302,15 +302,13 @@ def make_eval_step(forward_fn, weights, config, rope_cos, rope_sin):
     return lambda input_ids: jitted_step(input_ids, weights)
 
 
-def forward_model(eval_step_fn, input_ids, max_seq_len):
-    """Run JIT-compiled eval step with proper padding."""
+def forward_model(eval_step_fn, input_ids, max_seq_len, eval_batch_size):
+    """Run JIT-compiled eval step with fixed shape padding."""
     batch_size, seq_len = input_ids.shape
-    mesh_size = jax.device_count()
 
-    # Pad batch to nearest multiple of mesh_size for consistent JIT compilation
-    padded_batch = ((batch_size + mesh_size - 1) // mesh_size) * mesh_size
-    batch_pad = padded_batch - batch_size
-    seq_pad = max(0, max_seq_len - seq_len)
+    # Pad to fixed shape (eval_batch_size, max_seq_len) for JIT stability
+    batch_pad = eval_batch_size - batch_size
+    seq_pad = max_seq_len - seq_len
     if batch_pad > 0 or seq_pad > 0:
         input_ids = jnp.pad(input_ids, [(0, batch_pad), (0, seq_pad)], constant_values=0)
 
@@ -338,19 +336,37 @@ def evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len
     pad_token_id = bos_token_id
 
     correct = []
-    batch_indices = []
+    pending_indices = []
+    pending_rows = 0
     iterator = tqdm(range(len(data)), desc=label, disable=not main_process, leave=False)
 
     for idx in iterator:
-        batch_indices.append(idx)
+        item = data[idx]
+        if task_type == "multiple_choice":
+            num_choices = len(item["choices"])
+        elif task_type == "schema":
+            num_choices = len(item["context_options"])
+        else:  # language_modeling
+            num_choices = 1
 
-        if len(batch_indices) >= eval_batch_size or idx == len(data) - 1:
-            batch = prepare_batch(data, batch_indices, tokenizer, task_meta, bos_token_id, max_seq_len)
-            results = evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len)
+        # If adding this example would exceed batch size, process current batch first
+        if pending_rows + num_choices > eval_batch_size and pending_rows > 0:
+            batch = prepare_batch(data, pending_indices, tokenizer, task_meta, bos_token_id, max_seq_len)
+            results = evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_size)
             correct.extend([float(r) for r in results])
-            batch_indices = []
+            pending_indices = []
+            pending_rows = 0
             if main_process:
                 iterator.set_postfix(acc=f"{sum(correct)/len(correct):.2%}")
+
+        pending_indices.append(idx)
+        pending_rows += num_choices
+
+    # Process final batch
+    if pending_indices:
+        batch = prepare_batch(data, pending_indices, tokenizer, task_meta, bos_token_id, max_seq_len)
+        results = evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_size)
+        correct.extend([float(r) for r in results])
 
     return sum(correct) / len(correct) if correct else 0.0, task_type
 
