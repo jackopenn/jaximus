@@ -165,30 +165,42 @@ def batch_sequences_lm(tokenizer, prompts, bos_token_id):
     return [tokens_with], [start_idx], [end_idx]
 
 
-def forward_model(forward_fn, weights, config, input_ids, rope_cos, rope_sin):
-    """Run model forward, return losses and predictions. Pads batch to mesh size if needed."""
-    batch_size = input_ids.shape[0]
+def make_eval_step(forward_fn, weights, config, rope_cos, rope_sin):
+    """Create a JIT-compiled eval step function with weights bound."""
+    weights_sharding = jax.tree.map(lambda x: x.sharding, weights)
+
+    def eval_step(input_ids, weights):
+        logits = forward_fn(input_ids, weights, config, rope_cos=rope_cos, rope_sin=rope_sin)
+        target_ids = jnp.roll(input_ids, -1, axis=-1)
+        losses = optax.softmax_cross_entropy_with_integer_labels(logits, target_ids)
+        predictions = jnp.argmax(logits, axis=-1)
+        # Reshard outputs to replicated for easy slicing
+        losses = reshard(losses, P(None, None))
+        predictions = reshard(predictions, P(None, None))
+        return losses, predictions
+
+    jitted_step = jax.jit(eval_step, in_shardings=(P(None, None), weights_sharding), out_shardings=(P(), P()))
+    return lambda input_ids: jitted_step(input_ids, weights)
+
+
+def forward_model(eval_step_fn, input_ids, max_seq_len):
+    """Run JIT-compiled eval step with proper padding."""
+    batch_size, seq_len = input_ids.shape
     mesh_size = jax.device_count()
 
-    # Pad batch to mesh size if smaller (model forward has batch-sharded outputs)
-    if batch_size < mesh_size:
-        pad_size = mesh_size - batch_size
-        input_ids = jnp.pad(input_ids, [(0, pad_size), (0, 0)], constant_values=0)
+    # Pad to fixed shape (mesh_size, max_seq_len) for consistent JIT compilation
+    batch_pad = max(0, mesh_size - batch_size)
+    seq_pad = max(0, max_seq_len - seq_len)
+    if batch_pad > 0 or seq_pad > 0:
+        input_ids = jnp.pad(input_ids, [(0, batch_pad), (0, seq_pad)], constant_values=0)
 
-    logits = forward_fn(input_ids, weights, config, rope_cos=rope_cos, rope_sin=rope_sin)
-    target_ids = jnp.roll(input_ids, -1, axis=-1)
-    losses = optax.softmax_cross_entropy_with_integer_labels(logits, target_ids)
-    predictions = jnp.argmax(logits, axis=-1)
+    losses, predictions = eval_step_fn(input_ids)
 
-    # Reshard to replicated and slice back to original batch size
-    if batch_size < mesh_size:
-        losses = reshard(losses, P(None, None))[:batch_size]
-        predictions = reshard(predictions, P(None, None))[:batch_size]
-
-    return losses, predictions
+    # Slice back to original size
+    return losses[:batch_size, :seq_len], predictions[:batch_size, :seq_len]
 
 
-def evaluate_example(idx, data, forward_fn, weights, config, tokenizer, task_meta, rope_cos, rope_sin, max_seq_len):
+def evaluate_example(idx, data, eval_step_fn, tokenizer, task_meta, max_seq_len):
     """Evaluate a single example, return True if correct, False otherwise."""
     item = data[idx]
     task_type = task_meta["task_type"]
@@ -231,9 +243,7 @@ def evaluate_example(idx, data, forward_fn, weights, config, tokenizer, task_met
         tokens, start_idxs, end_idxs = new_tokens, new_start_idxs, new_end_idxs
 
     input_ids = stack_sequences(tokens, pad_token_id)
-    input_ids = reshard(input_ids, P(None, None))  # Replicated - batch too small to shard
-
-    losses, predictions = forward_model(forward_fn, weights, config, input_ids, rope_cos, rope_sin)
+    losses, predictions = forward_model(eval_step_fn, input_ids, max_seq_len)
 
     if task_type == "language_modeling":
         si, ei = start_idxs[0], end_idxs[0]
@@ -250,13 +260,12 @@ def evaluate_example(idx, data, forward_fn, weights, config, tokenizer, task_met
     return is_correct
 
 
-def evaluate_task(task_config, bundle_path, tokenizer, forward_fn, weights, config, rope_cos, rope_sin, max_per_task=-1):
+def evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len, max_per_task=-1):
     """Evaluate all examples for a single task."""
     dataset_uri = task_config["dataset_uri"]
     task_type = task_config["icl_task_type"]
     num_fewshot = task_config["num_fewshot"][0]
     continuation_delimiter = task_config.get("continuation_delimiter", "")
-    max_seq_len = getattr(config, "max_seq_len", None)
 
     data = load_task_data(bundle_path, dataset_uri)
     if max_per_task > 0:
@@ -267,7 +276,7 @@ def evaluate_task(task_config, bundle_path, tokenizer, forward_fn, weights, conf
     # All processes evaluate all examples (replicated SPMD)
     correct = []
     for idx in range(len(data)):
-        is_correct = evaluate_example(idx, data, forward_fn, weights, config, tokenizer, task_meta, rope_cos, rope_sin, max_seq_len)
+        is_correct = evaluate_example(idx, data, eval_step_fn, tokenizer, task_meta, max_seq_len)
         correct.append(float(is_correct))
 
     return sum(correct) / len(correct) if correct else 0.0, task_type
@@ -290,6 +299,7 @@ def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_p
     """
     bundle_path = download_eval_bundle(eval_data_path)
     main_process = jax.process_index() == 0
+    max_seq_len = getattr(config, "max_seq_len", 2048)
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -297,9 +307,12 @@ def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_p
     rope_cos, rope_sin = None, None
     if hasattr(config, "rope_theta") and config.rope_theta is not None:
         rope_cos, rope_sin = precompute_rope_embeddings(
-            config.max_seq_len, config.head_dim, config.rope_theta, getattr(config, "dtype", "bfloat16")
+            max_seq_len, config.head_dim, config.rope_theta, getattr(config, "dtype", "bfloat16")
         )
         rope_cos, rope_sin = reshard(rope_cos, P()), reshard(rope_sin, P())
+
+    # Create JIT-compiled eval step
+    eval_step_fn = make_eval_step(forward_fn, weights, config, rope_cos, rope_sin)
 
     task_configs = load_core_config(bundle_path)
     random_baselines = load_random_baselines(bundle_path)
@@ -312,7 +325,7 @@ def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_p
         if main_process:
             print(f"Evaluating {label}...")
 
-        score, task_type = evaluate_task(task_config, bundle_path, tokenizer, forward_fn, weights, config, rope_cos, rope_sin, max_per_task)
+        score, task_type = evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len, max_per_task)
         results[label] = score
         task_types[label] = task_type
 
