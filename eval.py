@@ -187,7 +187,7 @@ def crop_sequences(tokens, start_idxs, end_idxs, max_seq_len):
         if len(t) > max_seq_len:
             num_to_crop = len(t) - max_seq_len
             new_tokens.append(t[-max_seq_len:])
-            new_start_idxs.append(s - num_to_crop)
+            new_start_idxs.append(max(1, s - num_to_crop))
             new_end_idxs.append(e - num_to_crop)
         else:
             new_tokens.append(t)
