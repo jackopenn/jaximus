@@ -15,10 +15,7 @@ from parallel import l2p
 @jax.tree_util.register_dataclass
 @dataclass
 class CanonWeights:
-    w0: jax.Array
-    w1: jax.Array
-    w2: jax.Array
-    w3: jax.Array
+    kernel: jax.Array  # (4, dim) where rows are [w3, w2, w1, w0]
 
 
 @jax.tree_util.register_dataclass
@@ -49,38 +46,41 @@ class ModelWeights:
 
 
 def canon_layer(x, weights):
-    """h'_t = h_t + (w0*h_t + w1*h_{t-1} + w2*h_{t-2} + w3*h_{t-3})"""
+    """h'_t = h_t + sum_i(w_i * h_{t-i}) via depthwise 1D conv."""
     dtype = x.dtype
-    w0, w1, w2, w3 = (w.astype(dtype) for w in (weights.w0, weights.w1, weights.w2, weights.w3))
-    x_padded = jnp.pad(x, ((0, 0), (3, 0), (0, 0)), mode="constant")
-    return x + (x_padded[:, 3:, :] * w0 + x_padded[:, 2:-1, :] * w1 + x_padded[:, 1:-2, :] * w2 + x_padded[:, :-3, :] * w3)
+    dim = x.shape[-1]
+    depth = weights.kernel.shape[0]
+    kernel = weights.kernel.astype(dtype).T[:, None, :]  # (depth, dim) -> (dim, 1, depth)
+    x_t = x.transpose(0, 2, 1)
+    conv_out = jax.lax.conv_general_dilated(x_t, kernel, window_strides=(1,), padding=((depth - 1, 0),), feature_group_count=dim)
+    return x + conv_out.transpose(0, 2, 1)
 
 
 def _init_weight(key, init_fn, shape, sharding):
     return init_fn(key, shape, dtype=jnp.float32, out_sharding=None if sharding is None else l2p(sharding))
 
 
-def _init_canon_weights(dim, sharding, key):
-    keys = jax.random.split(key, 4)
-    zero_init = jax.nn.initializers.zeros
-    return CanonWeights(
-        w0=_init_weight(keys[0], zero_init, (dim,), sharding),
-        w1=_init_weight(keys[1], zero_init, (dim,), sharding),
-        w2=_init_weight(keys[2], zero_init, (dim,), sharding),
-        w3=_init_weight(keys[3], zero_init, (dim,), sharding),
-    )
+def _init_canon_weights(dim, depth, init, sharding, key):
+    if init == "zeros":
+        init_fn = jax.nn.initializers.zeros
+    elif init == "normal":
+        init_fn = jax.nn.initializers.normal(stddev=0.02)
+    else:
+        raise ValueError(f"Unknown canon init: {init}")
+    return CanonWeights(kernel=_init_weight(key, init_fn, (depth, dim), sharding))
 
 
 def _init_canon_block_weights(config, key):
     D, N, K, H, I = config.hidden_dim, config.num_attention_heads, config.num_key_value_heads, config.head_dim, config.intermediate_dim
+    depth, init = config.canon_depth, config.canon_init
     keys = iter(jax.random.split(key, 6))
     return CanonBlockWeights(
-        canon_a=_init_canon_weights(D, None, next(keys)) if config.canon_a else None,
-        canon_b_q=_init_canon_weights(N * H, None, next(keys)) if config.canon_b else None,
-        canon_b_k=_init_canon_weights(K * H, None, next(keys)) if config.canon_b else None,
-        canon_b_v=_init_canon_weights(K * H, None, next(keys)) if config.canon_b else None,
-        canon_c=_init_canon_weights(D, None, next(keys)) if config.canon_c else None,
-        canon_d=_init_canon_weights(I, None, next(keys)) if config.canon_d else None,
+        canon_a=_init_canon_weights(D, depth, init, None, next(keys)) if config.canon_a else None,
+        canon_b_q=_init_canon_weights(N * H, depth, init, None, next(keys)) if config.canon_b else None,
+        canon_b_k=_init_canon_weights(K * H, depth, init, None, next(keys)) if config.canon_b else None,
+        canon_b_v=_init_canon_weights(K * H, depth, init, None, next(keys)) if config.canon_b else None,
+        canon_c=_init_canon_weights(D, depth, init, None, next(keys)) if config.canon_c else None,
+        canon_d=_init_canon_weights(I, depth, init, None, next(keys)) if config.canon_d else None,
     )
 
 
@@ -137,64 +137,48 @@ def _attention_with_canon_b(x, weights, canon, rope_cos, rope_sin, qk_norm_epsil
     batch, seq_len, _ = x.shape
     head_dim = weights.q_proj.shape[1] // num_heads
 
-    with jax.named_scope("q_proj"):
-        q = jnp.matmul(x, weights.q_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_q")))
-        if canon is not None and canon.canon_b_q is not None:
-            q = canon_layer(q, canon.canon_b_q)
-        q = q.reshape(batch, seq_len, num_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
+    q = jnp.matmul(x, weights.q_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_q")))
+    if canon is not None and canon.canon_b_q is not None:
+        q = canon_layer(q, canon.canon_b_q)
+    q = q.reshape(batch, seq_len, num_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
 
-    with jax.named_scope("k_proj"):
-        k = jnp.matmul(x, weights.k_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_kv")))
-        if canon is not None and canon.canon_b_k is not None:
-            k = canon_layer(k, canon.canon_b_k)
-        k = k.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
+    k = jnp.matmul(x, weights.k_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_kv")))
+    if canon is not None and canon.canon_b_k is not None:
+        k = canon_layer(k, canon.canon_b_k)
+    k = k.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
 
-    with jax.named_scope("v_proj"):
-        v = jnp.matmul(x, weights.v_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_kv")))
-        if canon is not None and canon.canon_b_v is not None:
-            v = canon_layer(v, canon.canon_b_v)
-        v = v.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
+    v = jnp.matmul(x, weights.v_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_kv")))
+    if canon is not None and canon.canon_b_v is not None:
+        v = canon_layer(v, canon.canon_b_v)
+    v = v.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
 
     if rope_cos is not None and rope_sin is not None:
-        with jax.named_scope("apply_rope"):
-            cos = rope_cos[:, :seq_len, :, :]
-            sin = rope_sin[:, :seq_len, :, :]
-            q = apply_rope(q, cos, sin)
-            k = apply_rope(k, cos, sin)
+        cos, sin = rope_cos[:, :seq_len, :, :], rope_sin[:, :seq_len, :, :]
+        q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
 
     norm_fn = partial(rms_norm, eps=qk_norm_epsilon)
-    with jax.named_scope("q_norm"):
-        q = norm_fn(q, None).astype(dtype)
-    with jax.named_scope("k_norm"):
-        k = norm_fn(k, None).astype(dtype)
+    q = norm_fn(q, None).astype(dtype)
+    k = norm_fn(k, None).astype(dtype)
 
     if mask is not None:
         mask = make_attention_mask(mask)
 
-    with jax.named_scope("dot_product_attention"):
-        att = jax.nn.dot_product_attention(
-            query=q, key=k, value=v, is_causal=True,
-            implementation="cudnn" if jax.default_backend() == "gpu" else "xla", mask=mask,
-        )
+    att = jax.nn.dot_product_attention(
+        query=q, key=k, value=v, is_causal=True,
+        implementation="cudnn" if jax.default_backend() == "gpu" else "xla", mask=mask,
+    )
 
-    with jax.named_scope("o_proj"):
-        att = att.reshape(batch, seq_len, num_heads * head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
-        return jnp.matmul(att, weights.o_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_embed")))
+    att = att.reshape(batch, seq_len, num_heads * head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
+    return jnp.matmul(att, weights.o_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_embed")))
 
 
 def _mlp_with_canon_d(x, weights, canon, act_fn, dtype):
     """MLP with Canon-D applied after up_proj, before activation."""
-    with jax.named_scope("up_proj"):
-        h = jnp.matmul(x, weights.up_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_intermediate")))
-
+    h = jnp.matmul(x, weights.up_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_intermediate")))
     if canon is not None and canon.canon_d is not None:
         h = canon_layer(h, canon.canon_d)
-
-    with jax.named_scope("act_fn"):
-        h = resolve_act_fn(act_fn)(h)
-
-    with jax.named_scope("down_proj"):
-        return jnp.matmul(h, weights.down_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_embed")))
+    h = resolve_act_fn(act_fn)(h)
+    return jnp.matmul(h, weights.down_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_embed")))
 
 
 def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):

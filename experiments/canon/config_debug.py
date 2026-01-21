@@ -23,6 +23,8 @@ def get_config():
     cfg.model.canon_b = True
     cfg.model.canon_c = True
     cfg.model.canon_d = True
+    cfg.model.canon_depth = 4
+    cfg.model.canon_init = "zeros"
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
     cfg.data.tokenizer_name = "gpt2"
