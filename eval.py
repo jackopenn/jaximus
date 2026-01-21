@@ -5,11 +5,13 @@ https://arxiv.org/abs/2406.11794
 import csv
 import json
 import random
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
 
 import jax
+import numpy as np
 from tqdm import tqdm
 import jax.numpy as jnp
 import optax
@@ -134,10 +136,10 @@ def find_common_length(token_sequences, direction="left"):
 def stack_sequences(tokens, pad_token_id):
     """Stack up a list of token sequences, pad to longest on the right."""
     bsz, seq_len = len(tokens), max(len(x) for x in tokens)
-    input_ids = jnp.full((bsz, seq_len), pad_token_id, dtype=jnp.int32)
+    input_ids = np.full((bsz, seq_len), pad_token_id, dtype=np.int32)
     for i, x in enumerate(tokens):
-        input_ids = input_ids.at[i, : len(x)].set(jnp.array(x, dtype=jnp.int32))
-    return input_ids
+        input_ids[i, : len(x)] = x
+    return jnp.array(input_ids)
 
 
 def batch_sequences_mc(tokenizer, prompts, bos_token_id):
@@ -244,7 +246,7 @@ def prepare_batch(data, indices, tokenizer, task_meta, bos_token_id, max_seq_len
     }
 
 
-def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_size):
+def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_size, timing=False):
     """Evaluate a batch and return list of is_correct per example."""
     tokens = batch["tokens"]
     start_idxs = batch["start_idxs"]
@@ -256,8 +258,19 @@ def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_si
     if not tokens:
         return []
 
+    t0 = time.perf_counter() if timing else 0
     input_ids = stack_sequences(tokens, pad_token_id)
+    t1 = time.perf_counter() if timing else 0
+
     losses, predictions = forward_model(eval_step_fn, input_ids, max_seq_len, eval_batch_size)
+    jax.block_until_ready((losses, predictions))
+    t2 = time.perf_counter() if timing else 0
+
+    # Transfer to CPU once, then do all slicing on numpy
+    losses_np = np.asarray(losses)
+    predictions_np = np.asarray(predictions)
+    input_ids_np = np.asarray(input_ids)
+    t3 = time.perf_counter() if timing else 0
 
     results = []
     row_offset = 0
@@ -265,21 +278,26 @@ def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_si
     for ex_idx, n_choices in enumerate(num_choices):
         if task_type == "language_modeling":
             si, ei = start_idxs[row_offset], end_idxs[row_offset]
-            pred_tokens = predictions[row_offset, si - 1 : ei - 1]
-            actual_tokens = input_ids[row_offset, si:ei]
-            is_correct = bool(jnp.all(pred_tokens == actual_tokens))
+            pred_tokens = predictions_np[row_offset, si - 1 : ei - 1]
+            actual_tokens = input_ids_np[row_offset, si:ei]
+            is_correct = np.all(pred_tokens == actual_tokens)
         else:
             choice_losses = []
             for c in range(n_choices):
                 row = row_offset + c
                 si, ei = start_idxs[row], end_idxs[row]
-                mean_loss = float(losses[row, si - 1 : ei - 1].mean())
+                mean_loss = losses_np[row, si - 1 : ei - 1].mean()
                 choice_losses.append(mean_loss)
             pred_idx = choice_losses.index(min(choice_losses))
             is_correct = pred_idx == gold_labels[ex_idx]
 
         results.append(is_correct)
         row_offset += n_choices
+
+    t4 = time.perf_counter() if timing else 0
+
+    if timing:
+        print(f"stack: {t1-t0:.3f}s, forward: {t2-t1:.3f}s, transfer: {t3-t2:.3f}s, extract: {t4-t3:.3f}s")
 
     return results
 
