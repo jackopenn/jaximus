@@ -10,6 +10,7 @@ import zipfile
 from pathlib import Path
 
 import jax
+from tqdm import tqdm
 import jax.numpy as jnp
 import optax
 import yaml
@@ -266,18 +267,23 @@ def evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len
     task_type = task_config["icl_task_type"]
     num_fewshot = task_config["num_fewshot"][0]
     continuation_delimiter = task_config.get("continuation_delimiter", "")
+    label = task_config["label"]
 
     data = load_task_data(bundle_path, dataset_uri)
     if max_per_task > 0:
         data = data[:max_per_task]
 
     task_meta = {"task_type": task_type, "num_fewshot": num_fewshot, "continuation_delimiter": continuation_delimiter}
+    main_process = jax.process_index() == 0
 
     # All processes evaluate all examples (replicated SPMD)
     correct = []
-    for idx in range(len(data)):
+    iterator = tqdm(range(len(data)), desc=label, disable=not main_process, leave=False)
+    for idx in iterator:
         is_correct = evaluate_example(idx, data, eval_step_fn, tokenizer, task_meta, max_seq_len)
         correct.append(float(is_correct))
+        if main_process:
+            iterator.set_postfix(acc=f"{sum(correct)/len(correct):.2%}")
 
     return sum(correct) / len(correct) if correct else 0.0, task_type
 
@@ -321,16 +327,12 @@ def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_p
     task_types = {}
     for task_config in task_configs:
         label = task_config["label"]
-
-        if main_process:
-            print(f"Evaluating {label}...")
-
         score, task_type = evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len, max_per_task)
         results[label] = score
         task_types[label] = task_type
 
         if main_process:
-            print(f"  {label}: {score:.4f}")
+            print(f"{label}: {score:.4f}")
 
     centered_results = {}
     for label, score in results.items():
