@@ -18,12 +18,14 @@ def get_config():
     cfg.model.max_seq_len = 2048
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
+
+    # canon
     cfg.model.canon_a = True
     cfg.model.canon_b = True
     cfg.model.canon_c = True
     cfg.model.canon_d = True
     cfg.model.canon_depth = 4
-    cfg.model.canon_init = "zeros"
+    cfg.model.canon_init = "uniform"
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-100BT"]
     cfg.data.tokenizer_name = "gpt2"
