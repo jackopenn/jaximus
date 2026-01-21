@@ -14,19 +14,13 @@ from parallel import l2p
 
 @jax.tree_util.register_dataclass
 @dataclass
-class CanonWeights:
-    kernel: jax.Array  # (4, dim) where rows are [w3, w2, w1, w0]
-
-
-@jax.tree_util.register_dataclass
-@dataclass
 class CanonBlockWeights:
-    canon_a: Optional[CanonWeights]
-    canon_b_q: Optional[CanonWeights]
-    canon_b_k: Optional[CanonWeights]
-    canon_b_v: Optional[CanonWeights]
-    canon_c: Optional[CanonWeights]
-    canon_d: Optional[CanonWeights]
+    canon_a: Optional[jax.Array]  # (depth, dim)
+    canon_b_q: Optional[jax.Array]
+    canon_b_k: Optional[jax.Array]
+    canon_b_v: Optional[jax.Array]
+    canon_c: Optional[jax.Array]
+    canon_d: Optional[jax.Array]
 
 
 @jax.tree_util.register_dataclass
@@ -45,12 +39,12 @@ class ModelWeights:
     unembed: jax.Array
 
 
-def canon_layer(x, weights):
+def canon_layer(x, kernel):
     """h'_t = h_t + sum_i(w_i * h_{t-i}) via depthwise 1D conv."""
     dtype = x.dtype
     dim = x.shape[-1]
-    depth = weights.kernel.shape[0]
-    kernel = weights.kernel.astype(dtype).T[:, None, :]  # (depth, dim) -> (dim, 1, depth)
+    depth = kernel.shape[0]
+    kernel = kernel.astype(dtype).T[:, None, :]  # (depth, dim) -> (dim, 1, depth)
     x_t = x.transpose(0, 2, 1)
     conv_out = jax.lax.conv_general_dilated(x_t, kernel, window_strides=(1,), padding=((depth - 1, 0),), feature_group_count=dim)
     return x + conv_out.transpose(0, 2, 1)
@@ -60,27 +54,23 @@ def _init_weight(key, init_fn, shape, sharding):
     return init_fn(key, shape, dtype=jnp.float32, out_sharding=None if sharding is None else l2p(sharding))
 
 
-def _init_canon_weights(dim, depth, init, sharding, key):
-    if init == "zeros":
-        init_fn = jax.nn.initializers.zeros
-    elif init == "normal":
-        init_fn = jax.nn.initializers.normal(stddev=0.02)
-    else:
-        raise ValueError(f"Unknown canon init: {init}")
-    return CanonWeights(kernel=_init_weight(key, init_fn, (depth, dim), sharding))
-
-
 def _init_canon_block_weights(config, key):
     D, N, K, H, I = config.hidden_dim, config.num_attention_heads, config.num_key_value_heads, config.head_dim, config.intermediate_dim
     depth, init = config.canon_depth, config.canon_init
+    if init == "zeros":
+        init_fn = lambda dim: jax.nn.initializers.zeros
+    elif init == "uniform":
+        init_fn = lambda dim: jax.nn.initializers.uniform(scale=(3**0.5) * (dim**-0.5))
+    else:
+        raise ValueError(f"Unknown canon init: {init}")
     keys = iter(jax.random.split(key, 6))
     return CanonBlockWeights(
-        canon_a=_init_canon_weights(D, depth, init, None, next(keys)) if config.canon_a else None,
-        canon_b_q=_init_canon_weights(N * H, depth, init, None, next(keys)) if config.canon_b else None,
-        canon_b_k=_init_canon_weights(K * H, depth, init, None, next(keys)) if config.canon_b else None,
-        canon_b_v=_init_canon_weights(K * H, depth, init, None, next(keys)) if config.canon_b else None,
-        canon_c=_init_canon_weights(D, depth, init, None, next(keys)) if config.canon_c else None,
-        canon_d=_init_canon_weights(I, depth, init, None, next(keys)) if config.canon_d else None,
+        canon_a=_init_weight(next(keys), init_fn(D), (depth, D), None) if config.canon_a else None,
+        canon_b_q=_init_weight(next(keys), init_fn(N * H), (depth, N * H), None) if config.canon_b else None,
+        canon_b_k=_init_weight(next(keys), init_fn(K * H), (depth, K * H), None) if config.canon_b else None,
+        canon_b_v=_init_weight(next(keys), init_fn(K * H), (depth, K * H), None) if config.canon_b else None,
+        canon_c=_init_weight(next(keys), init_fn(D), (depth, D), None) if config.canon_c else None,
+        canon_d=_init_weight(next(keys), init_fn(I), (depth, I), None) if config.canon_d else None,
     )
 
 
