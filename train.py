@@ -21,6 +21,7 @@ from transformers import AutoTokenizer
 
 import wandb
 from data.hf import get_hf_dataset
+from eval import evaluate_model
 from generate import generate
 from modelling.layers.position import precompute_rope_embeddings
 from parallel import l2p, set_sharding_strategy
@@ -188,6 +189,13 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
                     wandb_run.log_artifact(
                         f"{checkpoint_dir}/{step}", name=f"{wandb_run.id}_model", type="model", aliases=[f"step_{step}"]
                     )
+
+            if cfg.eval_every > 0 and step % cfg.eval_every == 0:
+                eval_results = evaluate_model(model_weights, model_config, model_forward, tokenizer, cfg.eval_data_path, cfg.eval_max_per_task)
+                if main_process:
+                    wandb_run.log({f"eval/{k}": v for k, v in eval_results["results"].items()})
+                    wandb_run.log({f"eval_centered/{k}": v for k, v in eval_results["centered_results"].items()})
+                    wandb_run.log({"eval/core_metric": eval_results["core_metric"]})
 
             step += 1
 

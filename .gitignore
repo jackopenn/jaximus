@@ -5,6 +5,7 @@ checkpoints/
 traces/
 artifacts/
 saved/
+cache/
 uv.lock
 .DS_Store
 profiles/

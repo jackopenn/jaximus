@@ -38,6 +38,8 @@ def get_config():
     cfg.max_steps = int(10 * 3.82e9 // 524288)
     cfg.generate_every = 500
     cfg.eval_every = -1
+    cfg.eval_max_per_task = -1
+    cfg.eval_data_path = "cache"
     cfg.checkpoint_every = 5000
     cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat100-we-go-again"
     cfg.xpu = "v4"
