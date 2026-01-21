@@ -39,6 +39,7 @@ def get_config():
     cfg.generate_every = 500
     cfg.eval_every = 10
     cfg.eval_max_per_task = -1
+    cfg.eval_batch_size = 256
     cfg.eval_data_path = "cache"
     cfg.checkpoint_every = 5000
     cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/nanochat-base-core"

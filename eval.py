@@ -166,6 +166,124 @@ def batch_sequences_lm(tokenizer, prompts, bos_token_id):
     return [tokens_with], [start_idx], [end_idx]
 
 
+def get_fewshot_examples(data, idx, num_fewshot):
+    """Get fewshot examples for a given data index."""
+    if num_fewshot <= 0:
+        return []
+    rng = random.Random(1234 + idx)
+    available_indices = [i for i in range(len(data)) if i != idx]
+    fewshot_indices = rng.sample(available_indices, min(num_fewshot, len(available_indices)))
+    return [data[i] for i in fewshot_indices]
+
+
+def crop_sequences(tokens, start_idxs, end_idxs, max_seq_len):
+    """Crop sequences to max_seq_len from the left, adjusting indices accordingly."""
+    if max_seq_len is None:
+        return tokens, start_idxs, end_idxs
+    new_tokens, new_start_idxs, new_end_idxs = [], [], []
+    for t, s, e in zip(tokens, start_idxs, end_idxs):
+        if len(t) > max_seq_len:
+            num_to_crop = len(t) - max_seq_len
+            new_tokens.append(t[-max_seq_len:])
+            new_start_idxs.append(s - num_to_crop)
+            new_end_idxs.append(e - num_to_crop)
+        else:
+            new_tokens.append(t)
+            new_start_idxs.append(s)
+            new_end_idxs.append(e)
+    return new_tokens, new_start_idxs, new_end_idxs
+
+
+def prepare_batch(data, indices, tokenizer, task_meta, bos_token_id, max_seq_len):
+    """Prepare a batch of examples for evaluation."""
+    all_tokens = []
+    example_ids = []
+    start_idxs = []
+    end_idxs = []
+    gold_labels = []
+    num_choices_list = []
+
+    task_type = task_meta["task_type"]
+    continuation_delimiter = task_meta["continuation_delimiter"]
+    num_fewshot = task_meta["num_fewshot"]
+
+    for batch_idx, data_idx in enumerate(indices):
+        item = data[data_idx]
+        fewshot_examples = get_fewshot_examples(data, data_idx, num_fewshot)
+
+        if task_type == "multiple_choice":
+            prompts = render_prompts_mc(item, continuation_delimiter, fewshot_examples)
+            tokens, starts, ends = batch_sequences_mc(tokenizer, prompts, bos_token_id)
+        elif task_type == "schema":
+            prompts = render_prompts_schema(item, continuation_delimiter, fewshot_examples)
+            tokens, starts, ends = batch_sequences_schema(tokenizer, prompts, bos_token_id)
+        else:  # language_modeling
+            prompts = render_prompts_lm(item, continuation_delimiter, fewshot_examples)
+            tokens, starts, ends = batch_sequences_lm(tokenizer, prompts, bos_token_id)
+
+        tokens, starts, ends = crop_sequences(tokens, starts, ends, max_seq_len)
+
+        num_choices = len(tokens)
+        for choice_idx in range(num_choices):
+            all_tokens.append(tokens[choice_idx])
+            example_ids.append(batch_idx)
+            start_idxs.append(starts[choice_idx])
+            end_idxs.append(ends[choice_idx])
+
+        gold_labels.append(item.get("gold", 0))
+        num_choices_list.append(num_choices)
+
+    return {
+        "tokens": all_tokens,
+        "example_ids": example_ids,
+        "start_idxs": start_idxs,
+        "end_idxs": end_idxs,
+        "gold_labels": gold_labels,
+        "num_choices": num_choices_list,
+        "task_type": task_type,
+    }
+
+
+def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len):
+    """Evaluate a batch and return list of is_correct per example."""
+    tokens = batch["tokens"]
+    start_idxs = batch["start_idxs"]
+    end_idxs = batch["end_idxs"]
+    gold_labels = batch["gold_labels"]
+    num_choices = batch["num_choices"]
+    task_type = batch["task_type"]
+
+    if not tokens:
+        return []
+
+    input_ids = stack_sequences(tokens, pad_token_id)
+    losses, predictions = forward_model(eval_step_fn, input_ids, max_seq_len)
+
+    results = []
+    row_offset = 0
+
+    for ex_idx, n_choices in enumerate(num_choices):
+        if task_type == "language_modeling":
+            si, ei = start_idxs[row_offset], end_idxs[row_offset]
+            pred_tokens = predictions[row_offset, si - 1 : ei - 1]
+            actual_tokens = input_ids[row_offset, si:ei]
+            is_correct = bool(jnp.all(pred_tokens == actual_tokens))
+        else:
+            choice_losses = []
+            for c in range(n_choices):
+                row = row_offset + c
+                si, ei = start_idxs[row], end_idxs[row]
+                mean_loss = float(losses[row, si - 1 : ei - 1].mean())
+                choice_losses.append(mean_loss)
+            pred_idx = choice_losses.index(min(choice_losses))
+            is_correct = pred_idx == gold_labels[ex_idx]
+
+        results.append(is_correct)
+        row_offset += n_choices
+
+    return results
+
+
 def make_eval_step(forward_fn, weights, config, rope_cos, rope_sin):
     """Create a JIT-compiled eval step function with weights bound."""
     weights_sharding = jax.tree.map(lambda x: x.sharding, weights)
@@ -189,8 +307,9 @@ def forward_model(eval_step_fn, input_ids, max_seq_len):
     batch_size, seq_len = input_ids.shape
     mesh_size = jax.device_count()
 
-    # Pad to fixed shape (mesh_size, max_seq_len) for consistent JIT compilation
-    batch_pad = max(0, mesh_size - batch_size)
+    # Pad batch to nearest multiple of mesh_size for consistent JIT compilation
+    padded_batch = ((batch_size + mesh_size - 1) // mesh_size) * mesh_size
+    batch_pad = padded_batch - batch_size
     seq_pad = max(0, max_seq_len - seq_len)
     if batch_pad > 0 or seq_pad > 0:
         input_ids = jnp.pad(input_ids, [(0, batch_pad), (0, seq_pad)], constant_values=0)
@@ -201,68 +320,8 @@ def forward_model(eval_step_fn, input_ids, max_seq_len):
     return losses[:batch_size, :seq_len], predictions[:batch_size, :seq_len]
 
 
-def evaluate_example(idx, data, eval_step_fn, tokenizer, task_meta, max_seq_len):
-    """Evaluate a single example, return True if correct, False otherwise."""
-    item = data[idx]
-    task_type = task_meta["task_type"]
-    num_fewshot = task_meta["num_fewshot"]
-    continuation_delimiter = task_meta["continuation_delimiter"]
-    bos_token_id = tokenizer.bos_token_id or 0
-    pad_token_id = bos_token_id
-
-    fewshot_examples = []
-    if num_fewshot > 0:
-        rng = random.Random(1234 + idx)
-        available_indices = [i for i in range(len(data)) if i != idx]
-        fewshot_indices = rng.sample(available_indices, min(num_fewshot, len(available_indices)))
-        fewshot_examples = [data[i] for i in fewshot_indices]
-
-    if task_type == "multiple_choice":
-        prompts = render_prompts_mc(item, continuation_delimiter, fewshot_examples)
-        tokens, start_idxs, end_idxs = batch_sequences_mc(tokenizer, prompts, bos_token_id)
-    elif task_type == "schema":
-        prompts = render_prompts_schema(item, continuation_delimiter, fewshot_examples)
-        tokens, start_idxs, end_idxs = batch_sequences_schema(tokenizer, prompts, bos_token_id)
-    elif task_type == "language_modeling":
-        prompts = render_prompts_lm(item, continuation_delimiter, fewshot_examples)
-        tokens, start_idxs, end_idxs = batch_sequences_lm(tokenizer, prompts, bos_token_id)
-    else:
-        raise ValueError(f"Unsupported task type: {task_type}")
-
-    if max_seq_len is not None:
-        new_tokens, new_start_idxs, new_end_idxs = [], [], []
-        for t, s, e in zip(tokens, start_idxs, end_idxs):
-            if len(t) > max_seq_len:
-                num_to_crop = len(t) - max_seq_len
-                new_tokens.append(t[-max_seq_len:])
-                new_start_idxs.append(s - num_to_crop)
-                new_end_idxs.append(e - num_to_crop)
-            else:
-                new_tokens.append(t)
-                new_start_idxs.append(s)
-                new_end_idxs.append(e)
-        tokens, start_idxs, end_idxs = new_tokens, new_start_idxs, new_end_idxs
-
-    input_ids = stack_sequences(tokens, pad_token_id)
-    losses, predictions = forward_model(eval_step_fn, input_ids, max_seq_len)
-
-    if task_type == "language_modeling":
-        si, ei = start_idxs[0], end_idxs[0]
-        predicted_tokens = predictions[0, si - 1 : ei - 1]
-        actual_tokens = input_ids[0, si:ei]
-        is_correct = bool(jnp.all(predicted_tokens == actual_tokens))
-    elif task_type in ["multiple_choice", "schema"]:
-        mean_losses = [float(losses[i, si - 1 : ei - 1].mean()) for i, (si, ei) in enumerate(zip(start_idxs, end_idxs))]
-        pred_idx = mean_losses.index(min(mean_losses))
-        is_correct = pred_idx == item["gold"]
-    else:
-        raise ValueError(f"Unsupported task type: {task_type}")
-
-    return is_correct
-
-
-def evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len, max_per_task=-1):
-    """Evaluate all examples for a single task."""
+def evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len, max_per_task=-1, eval_batch_size=256):
+    """Evaluate all examples for a single task with batching."""
     dataset_uri = task_config["dataset_uri"]
     task_type = task_config["icl_task_type"]
     num_fewshot = task_config["num_fewshot"][0]
@@ -275,20 +334,28 @@ def evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len
 
     task_meta = {"task_type": task_type, "num_fewshot": num_fewshot, "continuation_delimiter": continuation_delimiter}
     main_process = jax.process_index() == 0
+    bos_token_id = tokenizer.bos_token_id or 0
+    pad_token_id = bos_token_id
 
-    # All processes evaluate all examples (replicated SPMD)
     correct = []
+    batch_indices = []
     iterator = tqdm(range(len(data)), desc=label, disable=not main_process, leave=False)
+
     for idx in iterator:
-        is_correct = evaluate_example(idx, data, eval_step_fn, tokenizer, task_meta, max_seq_len)
-        correct.append(float(is_correct))
-        if main_process:
-            iterator.set_postfix(acc=f"{sum(correct)/len(correct):.2%}")
+        batch_indices.append(idx)
+
+        if len(batch_indices) >= eval_batch_size or idx == len(data) - 1:
+            batch = prepare_batch(data, batch_indices, tokenizer, task_meta, bos_token_id, max_seq_len)
+            results = evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len)
+            correct.extend([float(r) for r in results])
+            batch_indices = []
+            if main_process:
+                iterator.set_postfix(acc=f"{sum(correct)/len(correct):.2%}")
 
     return sum(correct) / len(correct) if correct else 0.0, task_type
 
 
-def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_per_task=-1):
+def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_per_task=-1, eval_batch_size=256):
     """
     Evaluate model on CORE benchmark tasks.
 
@@ -299,6 +366,7 @@ def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_p
         tokenizer: HuggingFace tokenizer
         eval_data_path: Path to eval data cache (local or gs://)
         max_per_task: Limit examples per task for debugging (-1 = all)
+        eval_batch_size: Number of examples to batch together (default 256)
 
     Returns:
         dict with results, centered_results, core_metric
@@ -327,7 +395,9 @@ def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_p
     task_types = {}
     for task_config in task_configs:
         label = task_config["label"]
-        score, task_type = evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len, max_per_task)
+        score, task_type = evaluate_task(
+            task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len, max_per_task, eval_batch_size
+        )
         results[label] = score
         task_types[label] = task_type
 
