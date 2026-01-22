@@ -9,7 +9,7 @@ def get_config():
     cfg.exp_name = "nanochat-canon"
 
     cfg.model.vocab_size = 50304
-    cfg.model.num_layers = 20
+    cfg.model.num_layers = 28
     cfg.model.hidden_dim = lambda: cfg.model.num_layers * 64
     cfg.model.num_attention_heads = lambda: max(1, (cfg.model.hidden_dim + 127) // 128)
     cfg.model.num_key_value_heads = lambda: cfg.model.num_attention_heads
@@ -20,19 +20,19 @@ def get_config():
     cfg.model.norm_epsilon = 1e-6
 
     # canon
-    cfg.model.canon_a = True
-    cfg.model.canon_b = True
-    cfg.model.canon_c = True
-    cfg.model.canon_d = True
+    cfg.model.canon_a = False
+    cfg.model.canon_b = False 
+    cfg.model.canon_c = False
+    cfg.model.canon_d = False
     cfg.model.canon_depth = 4
     cfg.model.canon_init = "uniform"
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-100BT"]
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
-    cfg.data.batch_size = 128
+    cfg.data.batch_size = 32
 
-    cfg.optimizer.accum_steps = 2
+    cfg.optimizer.accum_steps = 8
     cfg.optimizer.warmup_steps = 0
     cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
     cfg.optimizer.momentum_start = 0.85
@@ -42,7 +42,7 @@ def get_config():
     cfg.optimizer.unembed.peak_lr = lambda: 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
     cfg.optimizer.other.peak_lr = 0.02
 
-    cfg.max_steps = int(3.82e9 // 524288)
+    cfg.max_steps = int(8.1e9 // 524288)
     cfg.generate_every = 500
     cfg.eval_every = 1000
     cfg.eval_max_per_task = 500
