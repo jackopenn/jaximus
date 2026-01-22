@@ -213,6 +213,16 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
                 aliases=[f"step_{cfg.max_steps}"],
             )
 
+    # full eval at end (max_per_task=-1)
+    if cfg.eval_every > 0:
+        eval_results = evaluate_model(
+            model_weights, model_config, model_forward, tokenizer, cfg.eval_data_path, -1, cfg.eval_batch_size
+        )
+        if main_process:
+            wandb_run.log({f"eval_final/{k}": v for k, v in eval_results["results"].items()}, step=cfg.max_steps)
+            wandb_run.log({f"eval_final/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=cfg.max_steps)
+            wandb_run.log({"eval_final/core_metric": eval_results["core_metric"]}, step=cfg.max_steps)
+
     if main_process:
         train_logger.flush()
         wandb_run.finish()
