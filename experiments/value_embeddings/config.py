@@ -47,7 +47,7 @@ def get_config():
     cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/value-embeddings-base"
     cfg.xpu = "v4"
     cfg.wandb = True
-    cfg.wandb_project = "nanochat"
+    cfg.wandb_project = "canon"
 
     cfg.parallel.strategy = "fsdp"
     cfg.parallel.data = 16
