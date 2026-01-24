@@ -22,9 +22,9 @@ def make_optimizer(cfg):
             if len(path) == 0:
                 return "other"
             names = [p.name for p in path if hasattr(p, "name")]
-            if any(n in ("embed", "pos_embed") for n in names):
+            if any(n in ("embed", "pos_embed", "value_embeddings") for n in names):
                 return "embed"
-            if any(n in ("unembed", "value_embedding_weights") for n in names):
+            if any(n in ("unembed", "value_residual_weights", "value_embedding_gate", "value_embedding_lambda") for n in names):
                 return "unembed"
             return "other"
 

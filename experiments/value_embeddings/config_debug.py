@@ -19,8 +19,12 @@ def get_config():
     cfg.model.max_seq_len = 256
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
-    cfg.model.value_embeddings = "learnt"  # None, "fixed", or "learnt"
-    cfg.model.value_embeddings_every_layer = 1  # Apply every n layers (last layer always)
+    cfg.model.value_residuals = "learnt"  # None, "fixed", or "learnt"
+    cfg.model.value_residuals_every_layer = 1  # Apply every n layers (last layer always)
+    cfg.model.value_embeddings = True  # Enable learned value embeddings
+    cfg.model.value_embeddings_every_layer = 2  # Apply every n layers (last layer always)
+    cfg.model.value_embeddings_use_gate = True  # Use input-dependent gating vs fixed lambda
+    cfg.model.value_embeddings_gate_channels = 32  # Input channels for gate computation
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
     cfg.data.tokenizer_name = "gpt2"
