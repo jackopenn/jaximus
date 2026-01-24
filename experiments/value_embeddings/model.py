@@ -30,6 +30,7 @@ class LayerWeights:
     attention_weights: AttentionWeights
     mlp_weights: MLPWeights
     value_residual_weights: Optional[ValueResidualWeights] = None
+    value_embeddings: Optional[jax.Array] = None  # (vocab_size, K*H), per-layer
     value_embedding_gate: Optional[ValueEmbeddingGateWeights] = None
     value_embedding_lambda: Optional[jax.Array] = None  # (num_kv_heads,), init 0.5
 
@@ -40,7 +41,6 @@ class ModelWeights:
     embed: jax.Array
     layer_weights: List[LayerWeights]
     unembed: jax.Array
-    value_embeddings: Optional[jax.Array] = None  # (vocab_size, K*H)
 
 
 def _init_weight(key, init_fn, shape, sharding):
@@ -114,18 +114,8 @@ def _init_value_embedding_lambda(config, layer_idx):
     return jnp.full((config.num_key_value_heads,), 0.5, dtype=jnp.float32)
 
 
-def _init_layer_weights(config, layer_idx, keys):
-    return LayerWeights(
-        attention_weights=_init_attention_weights(config, keys),
-        mlp_weights=_init_mlp_weights(config, keys),
-        value_residual_weights=_init_value_residual_weights(config, layer_idx),
-        value_embedding_gate=_init_value_embedding_gate(config, layer_idx),
-        value_embedding_lambda=_init_value_embedding_lambda(config, layer_idx),
-    )
-
-
-def _init_value_embeddings(config, key):
-    if not config.value_embeddings:
+def _init_value_embeddings(config, layer_idx, key):
+    if not _should_use_value_embeddings(config, layer_idx):
         return None
     K, H = config.num_key_value_heads, config.head_dim
     return _init_weight(
@@ -133,8 +123,19 @@ def _init_value_embeddings(config, key):
     )
 
 
+def _init_layer_weights(config, layer_idx, keys):
+    return LayerWeights(
+        attention_weights=_init_attention_weights(config, keys),
+        mlp_weights=_init_mlp_weights(config, keys),
+        value_residual_weights=_init_value_residual_weights(config, layer_idx),
+        value_embeddings=_init_value_embeddings(config, layer_idx, next(keys)),
+        value_embedding_gate=_init_value_embedding_gate(config, layer_idx),
+        value_embedding_lambda=_init_value_embedding_lambda(config, layer_idx),
+    )
+
+
 def init_model_weights(config, key):
-    keys = iter(jax.random.split(key, 3 + config.num_layers * 6))
+    keys = iter(jax.random.split(key, 2 + config.num_layers * 7))
     return ModelWeights(
         embed=_init_weight(
             next(keys),
@@ -149,7 +150,6 @@ def init_model_weights(config, key):
             (config.hidden_dim, config.vocab_size),
             ("model_embed", "model_vocab"),
         ),
-        value_embeddings=_init_value_embeddings(config, next(keys)),
     )
 
 
@@ -170,75 +170,64 @@ def _attention_with_v(
     value_embedding_lambda: Optional[jax.Array],
     mask: Optional[jax.Array] = None,
 ) -> Tuple[jax.Array, jax.Array]:
-    """Attention that returns both output and v (for v1 capture). Supports value residual and value embedding mixing."""
     dtype = jnp.bfloat16
     batch, seq_len, _ = x.shape
     head_dim = weights.q_proj.shape[1] // num_heads
 
-    with jax.named_scope("q_proj"):
-        q = jnp.matmul(x, weights.q_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_q")))
-        q = q.reshape(batch, seq_len, num_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
+    q = jnp.matmul(x, weights.q_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_q")))
+    q = q.reshape(batch, seq_len, num_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
 
-    with jax.named_scope("k_proj"):
-        k = jnp.matmul(x, weights.k_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_kv")))
-        k = k.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
+    k = jnp.matmul(x, weights.k_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_kv")))
+    k = k.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
 
-    with jax.named_scope("v_proj"):
-        v = jnp.matmul(x, weights.v_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_kv")))
-        v = v.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
+    v = jnp.matmul(x, weights.v_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_kv")))
+    v = v.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
 
-    v_out = v  # Capture v before mixing for v1
+    v_out = v
 
     if v1 is not None and value_residuals_mode is not None:
-        with jax.named_scope("value_residual"):
-            if value_residuals_mode == "fixed":
-                v = 0.5 * v + 0.5 * v1
-            elif value_residuals_mode == "learnt":
-                lam = value_residual_weights.lambda_v.astype(dtype)
-                v = lam * v + (1.0 - lam) * v1
+        if value_residuals_mode == "fixed":
+            v = 0.5 * v + 0.5 * v1
+        elif value_residuals_mode == "learnt":
+            lam = value_residual_weights.lambda_v.astype(dtype)
+            v = lam * v + (1.0 - lam) * v1
 
     if value_embeddings is not None and input_ids is not None:
-        with jax.named_scope("value_embedding"):
-            ve = value_embeddings.at[input_ids].get(out_sharding=l2p(("batch", "act_seq", "act_kv")))
-            ve = ve.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
-            ve = ve.astype(dtype)
-            if value_embedding_gate is not None:
-                gate_input = x[:, :, :value_embedding_gate.gate_proj.shape[0]]
-                gate = jnp.matmul(gate_input, value_embedding_gate.gate_proj.astype(dtype))  # (B, T, K)
-                gate = 2.0 * jax.nn.sigmoid(gate)  # Range (0, 2), init at 1.0
-                v = v + gate[:, :, :, None] * ve
-            else:
-                lam = value_embedding_lambda.astype(dtype)  # (K,)
-                v = (1.0 - lam)[None, None, :, None] * v + lam[None, None, :, None] * ve
+        ve = value_embeddings.at[input_ids].get(out_sharding=l2p(("batch", "act_seq", "act_kv")))
+        ve = ve.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
+        ve = ve.astype(dtype)
+        if value_embedding_gate is not None:
+            gate_input = x[:, :, :value_embedding_gate.gate_proj.shape[0]]
+            gate = jnp.matmul(gate_input, value_embedding_gate.gate_proj.astype(dtype))
+            gate = 2.0 * jax.nn.sigmoid(gate)
+            v = v + gate[:, :, :, None] * ve
+        else:
+            lam = value_embedding_lambda.astype(dtype)
+            v = (1.0 - lam)[None, None, :, None] * v + lam[None, None, :, None] * ve
 
     if rope_cos is not None and rope_sin is not None:
-        with jax.named_scope("apply_rope"):
-            cos = rope_cos[:, :seq_len, :, :]
-            sin = rope_sin[:, :seq_len, :, :]
-            q = apply_rope(q, cos, sin)
-            k = apply_rope(k, cos, sin)
+        cos = rope_cos[:, :seq_len, :, :]
+        sin = rope_sin[:, :seq_len, :, :]
+        q = apply_rope(q, cos, sin)
+        k = apply_rope(k, cos, sin)
 
-    with jax.named_scope("q_norm"):
-        q = rms_norm(q, None, qk_norm_epsilon).astype(dtype)
-    with jax.named_scope("k_norm"):
-        k = rms_norm(k, None, qk_norm_epsilon).astype(dtype)
+    q = rms_norm(q, None, qk_norm_epsilon).astype(dtype)
+    k = rms_norm(k, None, qk_norm_epsilon).astype(dtype)
 
     if mask is not None:
         mask = make_attention_mask(mask)
 
-    with jax.named_scope("dot_product_attention"):
-        att = jax.nn.dot_product_attention(
-            query=q,
-            key=k,
-            value=v,
-            is_causal=True,
-            implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
-            mask=mask,
-        )
+    att = jax.nn.dot_product_attention(
+        query=q,
+        key=k,
+        value=v,
+        is_causal=True,
+        implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
+        mask=mask,
+    )
 
-    with jax.named_scope("o_proj"):
-        att = att.reshape(batch, seq_len, num_heads * head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
-        out = jnp.matmul(att, weights.o_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_embed")))
+    att = att.reshape(batch, seq_len, num_heads * head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
+    out = jnp.matmul(att, weights.o_proj.astype(dtype), out_sharding=l2p(("batch", "seq", "act_embed")))
 
     return out, v_out
 
@@ -272,7 +261,7 @@ def model_forward(input_ids, weights, config, rope_cos=None, rope_sin=None, mask
             value_residual_weights=layer_weights.value_residual_weights,
             value_residuals_mode=value_res_mode,
             input_ids=input_ids if use_value_emb else None,
-            value_embeddings=weights.value_embeddings if use_value_emb else None,
+            value_embeddings=layer_weights.value_embeddings,
             value_embedding_gate=layer_weights.value_embedding_gate,
             value_embedding_lambda=layer_weights.value_embedding_lambda,
             mask=mask,
