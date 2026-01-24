@@ -129,7 +129,7 @@ def _init_value_embeddings(config, key):
         return None
     K, H = config.num_key_value_heads, config.head_dim
     return _init_weight(
-        key, jax.nn.initializers.normal(stddev=1.0), (config.vocab_size, K * H), ("model_vocab", "model_kv")
+        key, jax.nn.initializers.normal(stddev=1.0), (config.vocab_size, K * H), ("model_vocab", "model_embed")
     )
 
 
