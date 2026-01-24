@@ -21,7 +21,7 @@ def get_config():
     cfg.model.norm_epsilon = 1e-6
     cfg.model.value_residuals = None  # None, "fixed", or "learnt"
     cfg.model.value_residuals_every_layer = 1  # Apply every n layers (last layer always)
-    cfg.model.value_embeddings = False  # Enable learned value embeddings
+    cfg.model.value_embeddings = True # Enable learned value embeddings
     cfg.model.value_embeddings_every_layer = 2  # Apply every n layers (last layer always)
     cfg.model.value_embeddings_use_gate = True  # Use input-dependent gating vs fixed lambda
     cfg.model.value_embeddings_gate_channels = 32  # Input channels for gate computation
