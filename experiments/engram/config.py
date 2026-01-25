@@ -24,9 +24,9 @@ def get_config():
     cfg.model.engram.enabled = True
     cfg.model.engram.vocab_size_per_ngram = [251459, 251459]  # ~vocab*5, prime
     cfg.model.engram.max_ngram_size = 3  # bigrams + trigrams
-    cfg.model.engram.n_embed_per_ngram = 512
+    cfg.model.engram.n_embed_per_ngram = 256
     cfg.model.engram.n_head_per_ngram = 8
-    cfg.model.engram.layer_ids = [1, 15]
+    cfg.model.engram.layer_ids = [2, 10]
     cfg.model.engram.kernel_size = 4
     cfg.model.engram.seed = 0
     cfg.model.engram.mode = "consecutive"  # "consecutive" or "attention"
