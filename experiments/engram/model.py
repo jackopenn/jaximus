@@ -203,6 +203,7 @@ def _init_engram_weights(config, layer_id, hash_config, keys):
     engram_hidden = (cfg.max_ngram_size - 1) * cfg.n_embed_per_ngram
     embed_per_head = cfg.n_embed_per_ngram // cfg.n_head_per_ngram
     total_vocab = sum(sum(primes) for primes in hash_config.prime_vocab_sizes[layer_id])
+    total_vocab = ((total_vocab + 63) // 64) * 64  # pad to multiple of 64 for sharding
     return EngramWeights(
         embedding=_init_weight(next(keys), jax.nn.initializers.normal(stddev=0.02), (total_vocab, embed_per_head), ("model_engram_vocab", "model_engram_embed")),
         key_proj=_init_weight(next(keys), jax.nn.initializers.uniform(scale=(3**0.5) * (engram_hidden**-0.5)), (engram_hidden, config.hidden_dim), ("model_engram_hidden", "model_embed")),
