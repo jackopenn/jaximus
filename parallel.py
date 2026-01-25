@@ -11,6 +11,9 @@ SHARDING_RULES = {
         "model_kv": None,
         "model_head": None,
         "head_embed": None,
+        "model_engram_vocab": None,
+        "model_engram_embed": None,
+        "model_engram_hidden": None,
     },
     "fsdp": {
         "batch": "data",
@@ -22,6 +25,9 @@ SHARDING_RULES = {
         "model_kv": "data",
         "model_head": "data",
         "head_embed": None,
+        "model_engram_vocab": "data",
+        "model_engram_embed": None,
+        "model_engram_hidden": "data",
     },
 }
 
