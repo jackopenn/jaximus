@@ -15,12 +15,12 @@ def get_config():
     cfg.model.num_attention_heads = 12
     cfg.model.num_key_value_heads = 12
     cfg.model.head_dim = 128
-    cfg.model.intermediate_dim = lambda: int(8/3 * cfg.model.hidden_dim)
+    cfg.model.intermediate_dim = lambda: int(8 / 3 * cfg.model.hidden_dim)
     cfg.model.max_seq_len = 2048
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
 
-    cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "train"]
+    cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "default"]
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
 
