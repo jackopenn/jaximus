@@ -83,13 +83,13 @@ def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):
     )
     mlp_fn = partial(glu, act_fn="silu", dtype="bfloat16")
 
-    x = weights.embed.at[x].get(out_sharding=l2p(("batch", "act_seq", "act_embed")))
+    x = weights.embed.at[x].get(out_sharding=l2p(("batch", "act_seq", "act_embed"))).astype(jnp.bfloat16)
     x = norm_fn(x)
 
     for layer_weights in weights.layer_weights:
         residual = x
         x = norm_fn(x)
-        x = attention_fn(x, layer_weights.attention_weights)
+        x = attention_fn(x, layer_weights.attention_weights, mask=mask)
         x = x + residual
 
         residual = x
