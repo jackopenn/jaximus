@@ -26,7 +26,7 @@ def get_config():
 
     tokens_per_batch = 96 * 8192
     cfg.data.batch_size = 96
-    cfg.optimizer.accum_steps = lambda: tokens_per_batch // (cfg.data.batch_size * cfg.max_seq_len)
+    cfg.optimizer.accum_steps = lambda: tokens_per_batch // (cfg.data.batch_size * cfg.model.max_seq_len)
 
     cfg.optimizer.weight_decay = 0.1
     cfg.optimizer.clip_grad_norm = 0.0
