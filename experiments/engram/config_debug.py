@@ -3,11 +3,11 @@ from sws import Config
 
 
 def get_config():
-    """Debug config for local testing with engram."""
+    """Debug config for local testing."""
     cfg = Config()
     cfg.experiment = "experiments.engram"
     cfg.seed = 42
-    cfg.exp_name = "engram-debug"
+    cfg.exp_name = "baseline-debug"
 
     cfg.model.vocab_size = 50304
     cfg.model.num_layers = 4
@@ -19,16 +19,6 @@ def get_config():
     cfg.model.max_seq_len = 256
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
-
-    # Engram config
-    cfg.model.engram.enabled = True
-    cfg.model.engram.vocab_size_per_ngram = [10007, 10007]
-    cfg.model.engram.ngram_sizes = [2, 3]
-    cfg.model.engram.n_embed_per_ngram = 32
-    cfg.model.engram.n_head_per_ngram = 2
-    cfg.model.engram.layer_ids = [1, 3]
-    cfg.model.engram.kernel_size = 2
-    cfg.model.engram.seed = 0
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
     cfg.data.tokenizer_name = "gpt2"
@@ -52,7 +42,7 @@ def get_config():
     cfg.checkpoint_dir = "checkpoints"
     cfg.xpu = "v4"
     cfg.wandb = False
-    cfg.wandb_project = "engram"
+    cfg.wandb_project = "baseline"
 
     cfg.parallel.strategy = "dp"
     cfg.parallel.data = 1

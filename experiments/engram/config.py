@@ -3,11 +3,11 @@ from sws import Config
 
 
 def get_config():
-    """Base config with engram memory injection."""
+    """Base config for baseline transformer."""
     cfg = Config()
     cfg.experiment = "experiments.engram"
     cfg.seed = 42
-    cfg.exp_name = "engram-base"
+    cfg.exp_name = "baseline"
 
     cfg.model.vocab_size = 50304
     cfg.model.num_layers = 12
@@ -20,20 +20,10 @@ def get_config():
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
 
-    # Engram config
-    cfg.model.engram.enabled = True
-    cfg.model.engram.vocab_size_per_ngram = [251459, 251459]  # ~vocab*5, prime
-    cfg.model.engram.ngram_sizes = [2, 3]  # bigrams + trigrams
-    cfg.model.engram.n_embed_per_ngram = 256
-    cfg.model.engram.n_head_per_ngram = 8
-    cfg.model.engram.layer_ids = [2, 10]
-    cfg.model.engram.kernel_size = 4
-    cfg.model.engram.seed = 0
-
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-100BT"]
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
-    
+
     global_batch_size = 96 * 8192
     cfg.data.batch_size = 96
     cfg.optimizer.accum_steps = lambda: global_batch_size // cfg.data.batch_size
@@ -51,10 +41,10 @@ def get_config():
     cfg.eval_batch_size = 128
     cfg.eval_data_path = "cache"
     cfg.checkpoint_every = 5000
-    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/engram"
+    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/baseline"
     cfg.xpu = "v4"
     cfg.wandb = True
-    cfg.wandb_project = "engram"
+    cfg.wandb_project = "baseline"
 
     cfg.parallel.strategy = "fsdp"
     cfg.parallel.data = 16

@@ -9,7 +9,7 @@ from scheduler import (
 
 
 def make_optimizer(cfg):
-    """Create partitioned optimizer. Engram weights use AdamW like embeddings."""
+    """Create partitioned optimizer with Muon for weights and AdamW for embeddings."""
     opt = cfg.optimizer
 
     def make_schedule(peak_lr):
@@ -30,7 +30,7 @@ def make_optimizer(cfg):
                     learning_rate=learning_rate,
                     weight_decay=opt.weight_decay,
                     eps=1e-8,
-                    b1=0.9, 
+                    b1=0.9,
                     b2=0.95,
                 ),
                 "other": muon(
