@@ -177,7 +177,7 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
                     }
                 )
 
-            if step % cfg.generate_every == 0:
+            if cfg.generate_every > 0 and step % cfg.generate_every == 0:
                 samples = generate(model_weights, model_config, tokenizer, model_forward)
                 if main_process:
                     pretty_print_samples(samples)
