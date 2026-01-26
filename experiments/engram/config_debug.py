@@ -23,15 +23,12 @@ def get_config():
     # Engram config (smaller for debug)
     cfg.model.engram.enabled = True
     cfg.model.engram.vocab_size_per_ngram = [10007, 10007]  # small primes
-    cfg.model.engram.max_ngram_size = 3
+    cfg.model.engram.ngram_sizes = [2, 3]  # bigrams + trigrams
     cfg.model.engram.n_embed_per_ngram = 128
     cfg.model.engram.n_head_per_ngram = 2
     cfg.model.engram.layer_ids = [1, 3]
     cfg.model.engram.kernel_size = 4
     cfg.model.engram.seed = 0
-    cfg.model.engram.mode = "attention"  # "consecutive" or "attention"
-    cfg.model.engram.attn_lag = 0
-    cfg.model.engram.attn_exclude_self = True
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
     cfg.data.tokenizer_name = "gpt2"
