@@ -34,36 +34,36 @@ def init_model_weights(config, key):
 
     keys = iter(jax.random.split(key, 2 + config.num_layers * 7))
 
-    D, N, K, H, I = (
+    V, D, N, K, H, I = (
+        config.vocab_size,
         config.hidden_dim,
         config.num_attention_heads,
         config.num_key_value_heads,
         config.head_dim,
         config.intermediate_dim
     )
-    bound = (3**0.5) * (D**-0.5)
-    uniform, zeros, normal = jax.nn.initializers.uniform, jax.nn.initializers.zeros, jax.nn.initializers.normal
+    zeros, normal = jax.nn.initializers.zeros, jax.nn.initializers.lecun_normal()
 
     layer_weights = []
     for _ in range(config.num_layers):
         layer_weights.append(LayerWeights(
             attention_weights=AttentionWeights(
-                q_proj=w(next(keys), uniform(scale=bound), (D, N * H), ("model_embed", "model_q")),
-                k_proj=w(next(keys), uniform(scale=bound), (D, K * H), ("model_embed", "model_kv")),
-                v_proj=w(next(keys), uniform(scale=bound), (D, K * H), ("model_embed", "model_kv")),
+                q_proj=w(next(keys), normal, (D, N * H), ("model_embed", "model_q")),
+                k_proj=w(next(keys), normal, (D, K * H), ("model_embed", "model_kv")),
+                v_proj=w(next(keys), normal, (D, K * H), ("model_embed", "model_kv")),
                 o_proj=w(next(keys), zeros, (N * H, D), ("model_q", "model_embed")),
             ),
             glu_weights=GLUWeights(
-                gate_proj=w(next(keys), uniform(scale=bound), (D, I), ("model_embed", "model_intermediate")),
-                up_proj=w(next(keys), uniform(scale=bound), (D, I), ("model_embed", "model_intermediate")),
+                gate_proj=w(next(keys), normal, (D, I), ("model_embed", "model_intermediate")),
+                up_proj=w(next(keys), normal, (D, I), ("model_embed", "model_intermediate")),
                 down_proj=w(next(keys), zeros, (I, D), ("model_intermediate", "model_embed")),
             ),
         ))
 
     return ModelWeights(
-        embed=w(next(keys), normal(stddev=1.0), (config.vocab_size, D), ("model_vocab", "model_embed")),
+        embed=w(next(keys), normal, (V, D), ("model_vocab", "model_embed")),
         layer_weights=layer_weights,
-        unembed=w(next(keys), normal(stddev=0.001), (D, config.vocab_size), ("model_embed", "model_vocab")),
+        unembed=w(next(keys), normal, (D, V), ("model_embed", "model_vocab")),
     )
 
 

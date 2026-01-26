@@ -109,6 +109,8 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
     # init wandb and logger 
     cfg_dict = cfg.to_dict()
     cfg_dict["optimizers_resolved"] = optimizer_config
+    cfg_dict["num_params"] = num_params
+    cfg_dict["num_flops_per_token"] = num_flops_per_token
     if main_process:
         project_name = cfg.wandb_project if cfg.wandb_project else "transformers"
         wandb_run = wandb.init(project=project_name, config=cfg_dict) if cfg.wandb else DummyWandb()

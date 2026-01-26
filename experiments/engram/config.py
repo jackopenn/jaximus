@@ -25,17 +25,17 @@ def get_config():
     cfg.data.max_length = lambda: cfg.model.max_seq_len
 
     tokens_per_batch = 96 * 8192
-    cfg.data.batch_size = 128
+    cfg.data.batch_size = 96
     cfg.optimizer.accum_steps = lambda: tokens_per_batch // (cfg.data.batch_size * cfg.model.max_seq_len)
 
     cfg.optimizer.weight_decay = 0.1
     cfg.optimizer.clip_grad_norm = 1.0
-    cfg.optimizer.warmup_steps = lambda: int(0.1 * cfg.max_steps)
+    cfg.optimizer.warmup_steps = lambda: int(0.02 * cfg.max_steps)
     cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
     cfg.optimizer.peak_lr = 9.503e-4
 
     cfg.max_steps = int(8.92e9 // tokens_per_batch)
-    cfg.generate_every = -1
+    cfg.generate_every = 500
     cfg.eval_every = 1000
     cfg.eval_max_per_task = 500
     cfg.eval_batch_size = 128
