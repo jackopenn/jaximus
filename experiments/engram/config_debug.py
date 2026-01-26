@@ -20,15 +20,8 @@ def get_config():
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
 
-    # Engram config (smaller for debug)
-    cfg.model.engram.enabled = True
-    cfg.model.engram.vocab_size_per_ngram = [10007, 10007]  # small primes
-    cfg.model.engram.ngram_sizes = [2, 3]  # bigrams + trigrams
-    cfg.model.engram.n_embed_per_ngram = 128
-    cfg.model.engram.n_head_per_ngram = 2
-    cfg.model.engram.layer_ids = [1, 3]
-    cfg.model.engram.kernel_size = 4
-    cfg.model.engram.seed = 0
+    # Engram config
+    cfg.model.engram.enabled = False
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
     cfg.data.tokenizer_name = "gpt2"
@@ -36,14 +29,11 @@ def get_config():
     cfg.data.batch_size = 4
 
     cfg.optimizer.accum_steps = 1
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad_norm = 0.0
     cfg.optimizer.warmup_steps = 0
     cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
-    cfg.optimizer.momentum_start = 0.85
-    cfg.optimizer.momentum_end = 0.95
-    cfg.optimizer.momentum_warmup_steps = 300
-    cfg.optimizer.embed.peak_lr = lambda: 0.3 * ((cfg.model.hidden_dim / 768) ** -0.5)
-    cfg.optimizer.unembed.peak_lr = lambda: 0.004 * ((cfg.model.hidden_dim / 768) ** -0.5)
-    cfg.optimizer.other.peak_lr = 0.02
+    cfg.optimizer.peak_lr = 9.503e-4
 
     cfg.max_steps = 10
     cfg.generate_every = 100

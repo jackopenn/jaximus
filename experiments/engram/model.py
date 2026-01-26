@@ -5,7 +5,7 @@ import jax
 from jax import numpy as jnp
 
 from modelling.layers.attention import AttentionWeights
-from modelling.layers.mlp import MLPWeights, mlp
+from modelling.layers.mlp import GLUWeights, glu
 from modelling.layers.norm import rms_norm
 from modelling.layers.position import apply_rope
 from parallel import l2p
@@ -45,7 +45,7 @@ class EngramWeights:
 @dataclass
 class LayerWeights:
     attention_weights: AttentionWeights
-    mlp_weights: MLPWeights
+    glu_weights: GLUWeights
     engram_weights: Optional[EngramWeights] = None
 
 
@@ -194,7 +194,7 @@ def init_model_weights(config, key):
 
     prime_vocab_sizes = _make_hash_config(config.engram)[1] if config.engram.enabled else None
     num_engram_layers = len(config.engram.layer_ids) if config.engram.enabled else 0
-    keys = iter(jax.random.split(key, 2 + config.num_layers * 6 + num_engram_layers * 4))
+    keys = iter(jax.random.split(key, 2 + config.num_layers * 7 + num_engram_layers * 4))
 
     D, N, K, H, I = config.hidden_dim, config.num_attention_heads, config.num_key_value_heads, config.head_dim, config.intermediate_dim
     bound = (3**0.5) * (D**-0.5)
@@ -220,7 +220,8 @@ def init_model_weights(config, key):
                 v_proj=w(next(keys), uniform(scale=bound), (D, K * H), ("model_embed", "model_kv")),
                 o_proj=w(next(keys), zeros, (N * H, D), ("model_q", "model_embed")),
             ),
-            mlp_weights=MLPWeights(
+            glu_weights=GLUWeights(
+                gate_proj=w(next(keys), uniform(scale=bound), (D, I), ("model_embed", "model_intermediate")),
                 up_proj=w(next(keys), uniform(scale=bound), (D, I), ("model_embed", "model_intermediate")),
                 down_proj=w(next(keys), zeros, (I, D), ("model_intermediate", "model_embed")),
             ),
@@ -246,6 +247,6 @@ def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):
         if engram_enabled and layer_weights.engram_weights is not None:
             x = x + engram_forward(x, input_ids, layer_weights.engram_weights, layer_idx, hash_config, config.engram, eps)
         x = x + attention(rms_norm(x, None, eps), layer_weights.attention_weights, rope_cos, rope_sin, eps, config.num_attention_heads, config.num_key_value_heads)
-        x = x + mlp(rms_norm(x, None, eps), layer_weights.mlp_weights, act_fn="relu_squared", dtype="bfloat16")
+        x = x + glu(rms_norm(x, None, eps), layer_weights.glu_weights, act_fn="silu", dtype="bfloat16")
 
     return 15.0 * jnp.tanh(jnp.matmul(rms_norm(x, None, eps), weights.unembed.astype(jnp.bfloat16), out_sharding=l2p(("batch", "act_seq", "act_vocab"))).astype(jnp.float32) / 15.0)

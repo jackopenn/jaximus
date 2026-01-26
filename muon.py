@@ -90,7 +90,7 @@ def orthogonalize_layer_sharded(params, ns_coeffs, ns_steps, eps):
 
 
 def scale_by_muon(
-    ns_coeffs=(3.4445, -4.7750, 2.0315), ns_steps=5, beta=0.95, eps=1e-8, nesterov=True, layer_sharding=True
+    ns_coeffs=(3.4445, -4.7750, 2.0315), ns_steps=5, beta=0.95, eps=1e-8, nesterov=True, layer_sharding=True, adjust_lr_fn="original"
 ):
     def init_fn(params):
         mu = jax.tree.map(jnp.zeros_like, params)
@@ -122,7 +122,12 @@ def scale_by_muon(
                 mu_hat,
             )
         # apply shape factor
-        updates = jax.tree.map(lambda x: x * math.sqrt(max(1, x.shape[1] / x.shape[0])), orthogonalized)
+        if adjust_lr_fn == "original":
+            updates = jax.tree.map(lambda x: x * math.sqrt(max(1, x.shape[1] / x.shape[0])), orthogonalized)
+        elif adjust_lr_fn == "match_rms_adamw":
+            # https://arxiv.org/pdf/2502.16982v1
+            # transfer adamw tuned lr
+            updates = jax.tree.map(lambda x: x * 0.2 * math.sqrt(max(x.shape[0], x.shape[1])), orthogonalized)
         return updates, MuonState(count=count_inc, mu=mu, ns_coeffs=state.ns_coeffs)
 
     return base.GradientTransformation(init_fn, update_fn)
@@ -137,6 +142,7 @@ def muon(
     weight_decay=0.0,
     nesterov=True,
     layer_sharding=True,
+    adjust_lr_fn="original"
 ):
     """Muon optimizer."""
     return optax.chain(
@@ -147,6 +153,7 @@ def muon(
             eps=eps,
             nesterov=nesterov,
             layer_sharding=layer_sharding,
+            adjust_lr_fn=adjust_lr_fn
         ),
         transform.add_decayed_weights(weight_decay),
         transform.scale_by_learning_rate(learning_rate),
