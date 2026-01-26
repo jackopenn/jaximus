@@ -57,6 +57,9 @@ class ModelWeights:
     unembed: jax.Array
 
 
+_HASH_CONFIG_CACHE = {}
+
+
 def _next_prime(n):
     def is_prime(x):
         if x < 2:
@@ -192,7 +195,11 @@ def init_model_weights(config, key):
     def w(key, init_fn, shape, sharding):
         return init_fn(key, shape, dtype=jnp.float32, out_sharding=l2p(sharding))
 
-    prime_vocab_sizes = _make_hash_config(config.engram)[1] if config.engram.enabled else None
+    if config.engram.enabled:
+        _HASH_CONFIG_CACHE["config"] = _make_hash_config(config.engram)
+        prime_vocab_sizes = _HASH_CONFIG_CACHE["config"][1]
+    else:
+        prime_vocab_sizes = None
     num_engram_layers = len(config.engram.layer_ids) if config.engram.enabled else 0
     keys = iter(jax.random.split(key, 2 + config.num_layers * 7 + num_engram_layers * 4))
 
@@ -238,7 +245,7 @@ def init_model_weights(config, key):
 def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):
     eps = config.norm_epsilon
     engram_enabled = hasattr(config, "engram") and config.engram.enabled
-    hash_config = _make_hash_config(config.engram) if engram_enabled else None
+    hash_config = _HASH_CONFIG_CACHE.get("config") if engram_enabled else None
 
     input_ids = x
     x = rms_norm(weights.embed.at[x].get(out_sharding=l2p(("batch", "act_seq", "act_embed"))).astype(jnp.bfloat16), None, eps)
