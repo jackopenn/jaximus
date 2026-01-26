@@ -75,7 +75,7 @@ def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):
         rope_sin=rope_sin,
         qk_norm=True,
         qk_norm_type="rms",
-            qk_norm_epsilon=config.norm_epsilon,
+        qk_norm_epsilon=config.norm_epsilon,
         num_heads=config.num_attention_heads, 
         num_kv_heads=config.num_key_value_heads,
         dtype="bfloat16",
