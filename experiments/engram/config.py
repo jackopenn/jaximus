@@ -41,10 +41,10 @@ def get_config():
     cfg.eval_batch_size = 128
     cfg.eval_data_path = "cache"
     cfg.checkpoint_every = 5000
-    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/baseline"
+    cfg.checkpoint_dir = "gs://trm-jax-123/jaximus/checkpoints/engram"
     cfg.xpu = "v4"
     cfg.wandb = True
-    cfg.wandb_project = "baseline"
+    cfg.wandb_project = "engram"
 
     cfg.parallel.strategy = "fsdp"
     cfg.parallel.data = 16
