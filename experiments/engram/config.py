@@ -42,7 +42,7 @@ def get_config():
     cfg.optimizer.clip_grad_norm = 0.0
     cfg.optimizer.warmup_steps = lambda: int(0.1 * cfg.max_steps)
     cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
-    cfg.optimzer.peak_lr = 9.503e-4
+    cfg.optimizer.peak_lr = 9.503e-4
 
     cfg.max_steps = int(8.92e9 // global_batch_size)
     cfg.generate_every = -1
