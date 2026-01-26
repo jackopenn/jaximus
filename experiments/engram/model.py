@@ -248,5 +248,7 @@ def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):
             x = x + engram_forward(x, input_ids, layer_weights.engram_weights, layer_idx, hash_config, config.engram, eps)
         x = x + attention(rms_norm(x, None, eps), layer_weights.attention_weights, rope_cos, rope_sin, eps, config.num_attention_heads, config.num_key_value_heads)
         x = x + glu(rms_norm(x, None, eps), layer_weights.glu_weights, act_fn="silu", dtype="bfloat16")
-
-    return 15.0 * jnp.tanh(jnp.matmul(rms_norm(x, None, eps), weights.unembed.astype(jnp.bfloat16), out_sharding=l2p(("batch", "act_seq", "act_vocab"))).astype(jnp.float32) / 15.0)
+    
+    x = rms_norm(x, None, eps)
+    logits = jnp.matmul(x, weights.unembed.astype(jnp.bfloat16), out_sharding=l2p(("batch", "act_seq", "act_vocab")))
+    return logits
