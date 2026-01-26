@@ -20,7 +20,7 @@ def get_config():
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
 
-    cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-100BT"]
+    cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "train"]
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
 
