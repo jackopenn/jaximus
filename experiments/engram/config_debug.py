@@ -27,7 +27,7 @@ def get_config():
 
     cfg.optimizer.accum_steps = 1
     cfg.optimizer.weight_decay = 0.1
-    cfg.optimizer.clip_grad_norm = 0.0
+    cfg.optimizer.clip_grad_norm = 1.0
     cfg.optimizer.warmup_steps = 0
     cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
     cfg.optimizer.peak_lr = 9.503e-4
