@@ -22,12 +22,13 @@ def get_config():
 
     cfg.model.engram.enabled = True
     cfg.model.engram.vocab_size = 1000
-    cfg.model.engram.ngram_size = 3
+    cfg.model.engram.ngrams = [2, 3]
     cfg.model.engram.n_heads = 2
     cfg.model.engram.embed_dim = 8
     cfg.model.engram.layer_ids = [1, 3]
     cfg.model.engram.kernel_size = 4
-    cfg.model.engram.pad_id = 0
+    cfg.model.engram.lr_multiplier = 5.0
+    cfg.model.engram.weight_decay = 0.0
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
     cfg.data.tokenizer_name = "gpt2"
@@ -40,6 +41,8 @@ def get_config():
     cfg.optimizer.warmup_steps = 0
     cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
     cfg.optimizer.peak_lr = 9.503e-4
+    cfg.optimizer.engram_lr_multiplier = lambda: cfg.model.engram.lr_multiplier
+    cfg.optimizer.engram_weight_decay = lambda: cfg.model.engram.weight_decay
 
     cfg.max_steps = 3
     cfg.generate_every = -1

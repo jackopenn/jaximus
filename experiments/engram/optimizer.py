@@ -8,6 +8,16 @@ from scheduler import (
 )
 
 
+def _get_optimizer_group(path):
+    """Classify weight path into optimizer group: engram (5x lr), embed (adam), or other (muon)."""
+    names = [getattr(p, "name", None) for p in path]
+    if "engram" in names and "embeddings" in names:
+        return "engram"
+    if names[0] in ("embed", "unembed") or "conv_weight" in names:
+        return "embed"
+    return "other"
+
+
 def make_optimizer(cfg):
     """Create partitioned optimizer with Muon for weights and AdamW for embeddings."""
     opt = cfg.optimizer
@@ -23,6 +33,15 @@ def make_optimizer(cfg):
                     b1=0.9,
                     b2=0.95,
                 ),
+                "engram": optax.adamw(
+                    learning_rate=warmup_stable_decay_schedule(
+                        opt.peak_lr * opt.engram_lr_multiplier, opt.warmup_steps, opt.decay_steps, cfg.max_steps
+                    ),
+                    weight_decay=opt.engram_weight_decay,
+                    eps=1e-8,
+                    b1=0.9,
+                    b2=0.95,
+                ),
                 "other": muon(
                     learning_rate=warmup_stable_decay_schedule(opt.peak_lr, opt.warmup_steps, opt.decay_steps, cfg.max_steps),
                     weight_decay=opt.weight_decay,
@@ -32,7 +51,7 @@ def make_optimizer(cfg):
                     adjust_lr_fn="match_rms_adamw",
                 ),
             },
-            lambda state: jax.tree.map_with_path(lambda path, _: "embed" if path[0].name in ("embed", "unembed") else "other", state)
+            lambda state: jax.tree.map_with_path(lambda path, _: _get_optimizer_group(path), state)
         ),
     )
     if opt.accum_steps > 1:

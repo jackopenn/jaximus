@@ -22,12 +22,11 @@ def get_config():
 
     cfg.model.engram.enabled = True
     cfg.model.engram.vocab_size = 251520    # total vocab across all heads
-    cfg.model.engram.embed_dim = 1536 # total embedding dim (d_mem)
+    cfg.model.engram.embed_dim = 768           # total embedding dim (d_me
     cfg.model.engram.n_heads = 8                 # heads per n-gram type
     cfg.model.engram.ngrams = [2, 3]             # which n-grams to use
-    cfg.model.engram.layer_ids = [2, 11]         # layers to apply engram
+    cfg.model.engram.layer_ids = [1, 5]         # layers to apply engram (0-index)
     cfg.model.engram.kernel_size = 4
-    cfg.model.engram.pad_id = 0
     cfg.model.engram.lr_multiplier = 5.0         # 5x learning rate for engram
     cfg.model.engram.weight_decay = 0.0          # no weight decay for engram
 
@@ -44,6 +43,8 @@ def get_config():
     cfg.optimizer.warmup_steps = lambda: int(0.02 * cfg.max_steps)
     cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
     cfg.optimizer.peak_lr = 9.503e-4
+    cfg.optimizer.engram_lr_multiplier = lambda: cfg.model.engram.lr_multiplier
+    cfg.optimizer.engram_weight_decay = lambda: cfg.model.engram.weight_decay
 
     cfg.max_steps = int(8.92e9 // tokens_per_batch)
     cfg.generate_every = 500

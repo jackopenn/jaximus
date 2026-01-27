@@ -22,7 +22,6 @@ class EngramConfig:
     ngrams: Tuple[int, ...]      # which n-grams to use, e.g. (2, 3)
     n_heads: int                 # heads per n-gram type
     per_head_vocab: int          # vocab_size // n_total_heads
-    pad_id: int
     kernel_size: int
     layer_ids: Tuple[int, ...]
 
@@ -129,7 +128,7 @@ def hash_ngrams_multihead(x, engram_cfg):
     for ngram_idx, n in enumerate(engram_cfg.ngrams):
         mix = x * engram_cfg.multipliers[0]
         for k in range(1, n):
-            shifted = jnp.pad(x[:, :-k], ((0, 0), (k, 0)), constant_values=engram_cfg.pad_id)
+            shifted = jnp.pad(x[:, :-k], ((0, 0), (k, 0)), constant_values=0)
             mix = jnp.bitwise_xor(mix, shifted * engram_cfg.multipliers[k])
 
         for h in range(engram_cfg.n_heads):
@@ -208,7 +207,6 @@ def make_model_forward(config):
             ngrams=ngrams,
             n_heads=cfg_e.n_heads,
             per_head_vocab=per_head_vocab,
-            pad_id=cfg_e.pad_id,
             kernel_size=cfg_e.kernel_size,
             layer_ids=tuple(cfg_e.layer_ids),
         )
