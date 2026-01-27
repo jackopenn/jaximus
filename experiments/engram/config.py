@@ -21,11 +21,11 @@ def get_config():
     cfg.model.norm_epsilon = 1e-6
 
     cfg.model.engram.enabled = True
-    cfg.model.engram.vocab_size = 500_000
+    cfg.model.engram.vocab_size = 250_00
     cfg.model.engram.ngram_size = 3
     cfg.model.engram.n_heads = 8
     cfg.model.engram.embed_dim = 32
-    cfg.model.engram.layer_ids = [1, 11]
+    cfg.model.engram.layer_ids = [2]
     cfg.model.engram.kernel_size = 4
     cfg.model.engram.pad_id = 0
 
