@@ -15,33 +15,24 @@ import optax
 import orbax.checkpoint as ocp
 import wandb
 from jax import numpy as jnp
-from jax.sharding import AxisType, reshard
-from jax.sharding import PartitionSpec as P
+from jax.sharding import AxisType
 from sws import run
 from transformers import AutoTokenizer
 
 from data.hf import get_hf_dataset
 from eval import evaluate_model
 from generate import generate
-from modelling.layers.position import precompute_rope_embeddings
 from parallel import l2p, set_sharding_strategy
 from utils import DummyWandb, MetricLogger, pretty_print_model, pretty_print_samples
 
 
-def make_train_step(optimizer, model_config, model_weights, opt_weights, forward_fn):
+def make_train_step(optimizer, model_weights, opt_weights, forward_fn):
     model_weights_sharding = jax.tree.map(lambda x: x.sharding, model_weights)
     opt_weights_sharding = jax.tree.map(lambda x: x.sharding, opt_weights)
     input_sharding = l2p(("batch", "seq"))
 
-    rope_cos, rope_sin = None, None
-    if hasattr(model_config, "rope_theta") and model_config.rope_theta is not None:
-        rope_cos, rope_sin = precompute_rope_embeddings(
-            model_config.max_seq_len, model_config.head_dim, model_config.rope_theta, "bfloat16"
-        )
-        rope_cos, rope_sin = reshard(rope_cos, P()), reshard(rope_sin, P())
-
     def loss_fn(model_weights, x, y):
-        logits = forward_fn(x, model_weights, model_config, rope_cos=rope_cos, rope_sin=rope_sin)
+        logits = forward_fn(x, model_weights)
         return jnp.mean(
             jax.nn.logsumexp(logits, axis=-1, keepdims=True) - jnp.take_along_axis(logits, y[..., jnp.newaxis], axis=-1)
         )
@@ -59,7 +50,7 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights, forward
     return train_step, input_sharding
 
 
-def train(cfg, init_model_weights, model_forward, make_optimizer):
+def train(cfg, model_module, optimizer_module):
     # init mesh
     mesh = jax.make_mesh((cfg.parallel.data,), ("data",), (AxisType.Explicit,))
     jax.set_mesh(mesh)
@@ -81,8 +72,11 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
     # init sharding strategy, model and optimizer
     set_sharding_strategy(cfg.parallel.strategy)
     model_config = cfg.model
-    model_weights = init_model_weights(model_config, jax.random.PRNGKey(cfg.seed))
-    tx, schedule_fns = make_optimizer(cfg)
+
+    # create model forward (after mesh is set for rope sharding)
+    model_forward = model_module.make_model_forward(model_config)
+    model_weights = model_module.init_model_weights(model_config, jax.random.PRNGKey(cfg.seed))
+    tx, schedule_fns = optimizer_module.make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
     accum_steps = cfg.optimizer.accum_steps
     if main_process:
@@ -141,7 +135,7 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             profiler_options.gpu_dump_graph_node_mapping = True
 
     # make jit train step
-    train_step, input_sharding = make_train_step(tx, model_config, model_weights, opt_weights, model_forward)
+    train_step, input_sharding = make_train_step(tx, model_weights, opt_weights, model_forward)
 
     train_iter = iter(dataset)
     step, micro_step, t0 = 1, 0, time.time()
@@ -235,7 +229,7 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
 def main(cfg):
     model_module = importlib.import_module(f"{cfg.experiment}.model")
     optimizer_module = importlib.import_module(f"{cfg.experiment}.optimizer")
-    train(cfg, model_module.init_model_weights, model_module.model_forward, optimizer_module.make_optimizer)
+    train(cfg, model_module, optimizer_module)
 
     import sys
 

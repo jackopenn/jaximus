@@ -21,8 +21,6 @@ from jax.sharding import reshard
 from jinja2 import Template
 from tqdm import tqdm
 
-from modelling.layers.position import precompute_rope_embeddings
-
 EVAL_BUNDLE_URL = "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip"
 
 
@@ -318,12 +316,12 @@ def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_si
     return results
 
 
-def make_eval_step(forward_fn, weights, config, rope_cos, rope_sin):
+def make_eval_step(forward_fn, weights):
     """Create a JIT-compiled eval step function with weights bound."""
     weights_sharding = jax.tree.map(lambda x: x.sharding, weights)
 
     def eval_step(input_ids, weights):
-        logits = forward_fn(input_ids, weights, config, rope_cos=rope_cos, rope_sin=rope_sin)
+        logits = forward_fn(input_ids, weights)
         target_ids = jnp.roll(input_ids, -1, axis=-1)
         losses = optax.softmax_cross_entropy_with_integer_labels(logits, target_ids)
         predictions = jnp.argmax(logits, axis=-1)
@@ -428,15 +426,8 @@ def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_p
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    rope_cos, rope_sin = None, None
-    if hasattr(config, "rope_theta") and config.rope_theta is not None:
-        rope_cos, rope_sin = precompute_rope_embeddings(
-            max_seq_len, config.head_dim, config.rope_theta, getattr(config, "dtype", "bfloat16")
-        )
-        rope_cos, rope_sin = reshard(rope_cos, P()), reshard(rope_sin, P())
-
     # Create JIT-compiled eval step
-    eval_step_fn = make_eval_step(forward_fn, weights, config, rope_cos, rope_sin)
+    eval_step_fn = make_eval_step(forward_fn, weights)
 
     task_configs = load_core_config(bundle_path)
     random_baselines = load_random_baselines(bundle_path)

@@ -7,8 +7,12 @@
 - Jaximus is a jax codebase for experimenting with different LLM architectures and training methods
 - The main approach is to create an experiment in `experiments/`. Which contains at minimum 3 files:
     - `config.py`: contains the config of the exp.
-    - `model.py`: contains the model definition and forward pass. Implements at minimum `init_model_weights()` and `model_forward()` functions.
+    - `model.py`: contains the model definition and forward pass. Implements `init_model_weights()` and `make_model_forward()`.
     - `optimizer.py`: contains `make_optimizer()` function that returns an optax optimizer.
+
+### Model Forward Pattern
+- `make_model_forward(config)` - factory that returns a partial function `forward(x, weights, mask=None) -> logits`
+- The factory precomputes rope embeddings and other config-derived values, binding them via `functools.partial`
 - The rest of the code not in `experiments/` contains general training logic that should work with any implementation of the functions above (checkpointing, logging, sampling etc.)
 
 ### Style

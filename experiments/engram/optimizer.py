@@ -1,6 +1,6 @@
 import jax
 import optax
-import muon
+from muon import muon
 
 from scheduler import (
     warmup_stable_decay_schedule,
@@ -23,15 +23,13 @@ def make_optimizer(cfg):
                     b1=0.9,
                     b2=0.95,
                 ),
-                "other": optax.adamw(
+                "other": muon(
                     learning_rate=warmup_stable_decay_schedule(opt.peak_lr, opt.warmup_steps, opt.decay_steps, cfg.max_steps),
                     weight_decay=opt.weight_decay,
-                    # nesterov=True,
-                    # layer_sharding=True,
+                    nesterov=True,
+                    layer_sharding=True,
                     eps=1e-8,
-                    # adjust_lr_fn="match_rms_adamw",
-                    b1=0.9,
-                    b2=0.95,
+                    adjust_lr_fn="match_rms_adamw",
                 ),
             },
             lambda state: jax.tree.map_with_path(lambda path, _: "embed" if path[0].name in ("embed", "unembed") else "other", state)

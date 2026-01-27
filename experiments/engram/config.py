@@ -20,6 +20,15 @@ def get_config():
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
 
+    cfg.model.engram.enabled = True
+    cfg.model.engram.vocab_size = 500_000
+    cfg.model.engram.ngram_size = 3
+    cfg.model.engram.n_heads = 8
+    cfg.model.engram.embed_dim = 32
+    cfg.model.engram.layer_ids = [1, 11]
+    cfg.model.engram.kernel_size = 4
+    cfg.model.engram.pad_id = 0
+
     cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "default"]
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
