@@ -59,6 +59,7 @@ def make_optimizer(cfg):
 
     schedule_fns = {
         "lr_embed": warmup_stable_decay_schedule_py(opt.peak_lr, opt.warmup_steps, opt.decay_steps, cfg.max_steps),
+        "lr_engram": warmup_stable_decay_schedule_py(opt.peak_lr * opt.engram_lr_multiplier, opt.warmup_steps, opt.decay_steps, cfg.max_steps),
         "lr_other": warmup_stable_decay_schedule_py(opt.peak_lr, opt.warmup_steps, opt.decay_steps, cfg.max_steps),
     }
 
