@@ -13,13 +13,13 @@ if os.environ.get("JAX_MULTIHOST", "0") == "1":
 
 import optax
 import orbax.checkpoint as ocp
+import wandb
 from jax import numpy as jnp
 from jax.sharding import AxisType, reshard
 from jax.sharding import PartitionSpec as P
 from sws import run
 from transformers import AutoTokenizer
 
-import wandb
 from data.hf import get_hf_dataset
 from eval import evaluate_model
 from generate import generate
@@ -60,13 +60,12 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights, forward
 
 
 def train(cfg, init_model_weights, model_forward, make_optimizer):
-    # init mesh 
+    # init mesh
     mesh = jax.make_mesh((cfg.parallel.data,), ("data",), (AxisType.Explicit,))
     jax.set_mesh(mesh)
     main_process = jax.process_index() == 0
     if main_process:
         print(f"{mesh=}\n")
-
 
     # init tokenizer and dataset
     tokenizer = AutoTokenizer.from_pretrained(cfg.data.tokenizer_name)
@@ -79,17 +78,15 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
         num_proc=None,
     )
 
-    
     # init sharding strategy, model and optimizer
     set_sharding_strategy(cfg.parallel.strategy)
     model_config = cfg.model
     model_weights = init_model_weights(model_config, jax.random.PRNGKey(cfg.seed))
-    tx, optimizer_config, schedule_fns = make_optimizer(cfg)
+    tx, schedule_fns = make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
     accum_steps = cfg.optimizer.accum_steps
     if main_process:
         pretty_print_model(model_weights)
-
 
     # calculate num_flops_per_token for mfu
     num_params = sum(x.size for x in jax.tree_util.tree_leaves(model_weights))
@@ -105,10 +102,8 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
     if main_process:
         print(f"{num_params=}\n{num_flops_per_token=}\n")
 
-
-    # init wandb and logger 
+    # init wandb and logger
     cfg_dict = cfg.to_dict()
-    cfg_dict["optimizers_resolved"] = optimizer_config
     cfg_dict["num_params"] = num_params
     cfg_dict["num_flops_per_token"] = num_flops_per_token
     if main_process:
@@ -123,17 +118,16 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             cfg.max_steps,
             wandb_run,
         )
-    
 
     # init checkpoint manager
-    checkpoint_dir = cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
+    checkpoint_dir = (
+        cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
+    )
     if main_process:
         os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_manager = ocp.CheckpointManager(
-        checkpoint_dir,
-        options=ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
+        checkpoint_dir, options=ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
     )
-    
 
     # init profiler
     if main_process:
@@ -145,8 +139,6 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             profiler_options.gpu_enable_nvtx_tracking = True
             profiler_options.gpu_enable_cupti_activity_graph_trace = True
             profiler_options.gpu_dump_graph_node_mapping = True
-
-
 
     # make jit train step
     train_step, input_sharding = make_train_step(tx, model_config, model_weights, opt_weights, model_forward)
@@ -194,11 +186,19 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
 
             if cfg.eval_every > 0 and step % cfg.eval_every == 0:
                 eval_results = evaluate_model(
-                    model_weights, model_config, model_forward, tokenizer, cfg.eval_data_path, cfg.eval_max_per_task, cfg.eval_batch_size
+                    model_weights,
+                    model_config,
+                    model_forward,
+                    tokenizer,
+                    cfg.eval_data_path,
+                    cfg.eval_max_per_task,
+                    cfg.eval_batch_size,
                 )
                 if main_process:
                     wandb_run.log({f"eval/{k}": v for k, v in eval_results["results"].items()}, step=step)
-                    wandb_run.log({f"eval/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=step)
+                    wandb_run.log(
+                        {f"eval/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=step
+                    )
                     wandb_run.log({"eval/core_metric": eval_results["core_metric"]}, step=step)
 
             step += 1
@@ -222,7 +222,9 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
         )
         if main_process:
             wandb_run.log({f"eval_final/{k}": v for k, v in eval_results["results"].items()}, step=cfg.max_steps)
-            wandb_run.log({f"eval_final/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=cfg.max_steps)
+            wandb_run.log(
+                {f"eval_final/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=cfg.max_steps
+            )
             wandb_run.log({"eval_final/core_metric": eval_results["core_metric"]}, step=cfg.max_steps)
 
     if main_process:
@@ -236,6 +238,7 @@ def main(cfg):
     train(cfg, model_module.init_model_weights, model_module.model_forward, optimizer_module.make_optimizer)
 
     import sys
+
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)
