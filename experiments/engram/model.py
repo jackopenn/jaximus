@@ -4,7 +4,6 @@ from typing import List, Optional, Tuple
 
 import jax
 from jax import numpy as jnp
-from jax.sharding import reshard
 
 from modelling.layers.attention import AttentionWeights, attention
 from modelling.layers.mlp import GLUWeights, glu
@@ -17,11 +16,12 @@ from parallel import l2p
 class EngramConfig:
     """Precomputed engram configuration (not part of weights tree)."""
 
-    vocab_sizes: jax.Array
-    head_offsets: jax.Array
-    multipliers: jax.Array
-    ngram_size: int
-    n_heads: int
+    vocab_size: int              # total vocab size
+    head_offsets: jax.Array      # [n_total_heads] offsets for per-head vocab
+    multipliers: jax.Array       # [max_ngram] XOR hash multipliers
+    ngrams: Tuple[int, ...]      # which n-grams to use, e.g. (2, 3)
+    n_heads: int                 # heads per n-gram type
+    per_head_vocab: int          # vocab_size // n_total_heads
     pad_id: int
     kernel_size: int
     layer_ids: Tuple[int, ...]
@@ -34,7 +34,6 @@ class EngramWeights:
     key_proj: jax.Array
     value_proj: jax.Array
     conv_weight: jax.Array
-    conv_norm_scale: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -56,24 +55,22 @@ class ModelWeights:
 def _init_engram_weights(config, key):
     """Initialize engram weights for one layer."""
     cfg_e = config.engram
-    n_total_heads = cfg_e.n_heads * (cfg_e.ngram_size - 1)
-    flat_embed_dim = n_total_heads * cfg_e.embed_dim
-    total_vocab = cfg_e.vocab_size * n_total_heads
+    n_total_heads = cfg_e.n_heads * len(cfg_e.ngrams)
+    per_head_embed = cfg_e.embed_dim // n_total_heads
     D = config.hidden_dim
 
     def w(key, init_fn, shape, sharding):
         return init_fn(key, shape, dtype=jnp.float32, out_sharding=l2p(sharding))
 
-    keys = jax.random.split(key, 5)
+    keys = jax.random.split(key, 4)
     normal = jax.nn.initializers.normal(0.02)
     zeros = jax.nn.initializers.zeros
 
     return EngramWeights(
-        embeddings=w(keys[0], normal, (total_vocab, cfg_e.embed_dim), ("model_engram_vocab", "model_engram_embed")),
-        key_proj=w(keys[1], normal, (flat_embed_dim, D), ("model_engram_embed", "model_engram_hidden")),
-        value_proj=w(keys[2], zeros, (flat_embed_dim, D), ("model_engram_embed", "model_engram_hidden")),
+        embeddings=w(keys[0], normal, (cfg_e.vocab_size, per_head_embed), ("model_engram_vocab", "model_engram_embed")),
+        key_proj=w(keys[1], normal, (cfg_e.embed_dim, D), ("model_engram_embed", "model_engram_hidden")),
+        value_proj=w(keys[2], zeros, (cfg_e.embed_dim, D), ("model_engram_embed", "model_engram_hidden")),
         conv_weight=w(keys[3], zeros, (D, cfg_e.kernel_size), ("model_engram_hidden",)),
-        conv_norm_scale=jnp.ones((D,)),
     )
 
 
@@ -127,27 +124,17 @@ def init_model_weights(config, key):
 
 def hash_ngrams_multihead(x, engram_cfg):
     """Multi-head n-gram hashing."""
-    B, S = x.shape
     all_hashes = []
 
-    # Get sharding for traced arrays
-    x_sharding = jax.typeof(x).sharding
-
-    for n in range(2, engram_cfg.ngram_size + 1):
+    for ngram_idx, n in enumerate(engram_cfg.ngrams):
         mix = x * engram_cfg.multipliers[0]
         for k in range(1, n):
-            # Shift x to the right by k positions, padding with pad_id on the left
-            pad = jnp.full((B, k), engram_cfg.pad_id, dtype=x.dtype)
-            sliced = x[:, :-k] if k < S else jnp.zeros((B, 0), dtype=x.dtype)
-            # Reshard to match x's sharding for concatenation
-            pad = reshard(pad, x_sharding)
-            sliced = reshard(sliced, x_sharding)
-            shifted = jnp.concatenate([pad, sliced], axis=1)
+            shifted = jnp.pad(x[:, :-k], ((0, 0), (k, 0)), constant_values=engram_cfg.pad_id)
             mix = jnp.bitwise_xor(mix, shifted * engram_cfg.multipliers[k])
 
         for h in range(engram_cfg.n_heads):
-            head_idx = (n - 2) * engram_cfg.n_heads + h
-            all_hashes.append(mix % engram_cfg.vocab_sizes[head_idx])
+            head_idx = ngram_idx * engram_cfg.n_heads + h
+            all_hashes.append(mix % engram_cfg.per_head_vocab + engram_cfg.head_offsets[head_idx])
 
     return jnp.stack(all_hashes, axis=-1)
 
@@ -155,17 +142,20 @@ def hash_ngrams_multihead(x, engram_cfg):
 def engram_forward(x, input_ids, engram_weights, engram_cfg, hidden_dim):
     """Full engram with multi-head hash, gates, and ShortConv."""
     B, S, D = x.shape
-    kernel_size, dilation = engram_cfg.kernel_size, 3
+    kernel_size, dilation = engram_cfg.kernel_size, max(engram_cfg.ngrams)
 
-    # Hash and embed lookup
+    # Hash and embed lookup (indices already include head offsets)
     hash_indices = hash_ngrams_multihead(input_ids, engram_cfg)
-    shifted_indices = hash_indices + engram_cfg.head_offsets
-    embeds = engram_weights.embeddings.at[shifted_indices].get(out_sharding=l2p(("batch", "act_seq", None, None)))
+    embeds = engram_weights.embeddings.at[hash_indices].get(out_sharding=l2p(("batch", "act_seq", None, None)))
     flat_embeds = embeds.reshape(B, S, -1).astype(jnp.bfloat16)
 
     # Project to key/value
-    key = jnp.matmul(flat_embeds, engram_weights.key_proj.astype(jnp.bfloat16))
-    value = jnp.matmul(flat_embeds, engram_weights.value_proj.astype(jnp.bfloat16))
+    key = jnp.matmul(
+        flat_embeds, engram_weights.key_proj.astype(jnp.bfloat16), out_sharding=l2p(("batch", "act_seq", "act_embed"))
+    )
+    value = jnp.matmul(
+        flat_embeds, engram_weights.value_proj.astype(jnp.bfloat16), out_sharding=l2p(("batch", "act_seq", "act_embed"))
+    )
 
     # Gate: sigmoid of RMS-normed key-query alignment
     key_norm = rms_norm(key, None, 1e-6)
@@ -176,35 +166,27 @@ def engram_forward(x, input_ids, engram_weights, engram_cfg, hidden_dim):
     gated_value = gate * value
 
     # Depthwise dilated conv with RMSNorm and SiLU
-    gv_norm = rms_norm(gated_value, None, 1e-5) * engram_weights.conv_norm_scale
-
-    # Causal padding for dilated conv
+    gv_norm = rms_norm(gated_value, None, 1e-5)[:, None, :, :]
+    kernel = engram_weights.conv_weight.astype(gv_norm.dtype).T[None, :, None, :]
     pad_len = (kernel_size - 1) * dilation
-    gv_padded = jnp.pad(gv_norm, ((0, 0), (pad_len, 0), (0, 0)), mode="constant")
-
-    # Depthwise 1D dilated conv: (B, S+pad, D) -> (B, S, D)
-    # Reshape for conv: (B, S+pad, D) -> (B, 1, S+pad, D) for NHWC-like layout
-    gv_conv = gv_padded[:, None, :, :]  # (B, 1, S+pad, D)
-    # Kernel: (D, kernel_size) -> (1, kernel_size, 1, D) for depthwise
-    kernel = engram_weights.conv_weight.astype(gv_conv.dtype).T[None, :, None, :]  # (1, kernel_size, 1, D)
     conv_out = jax.lax.conv_general_dilated(
-        gv_conv,
+        gv_norm,
         kernel,
         window_strides=(1, 1),
-        padding="VALID",
+        padding=((0, 0), (pad_len, 0)),
         rhs_dilation=(1, dilation),
         dimension_numbers=("NHWC", "HWIO", "NHWC"),
         feature_group_count=D,
-    )[:, 0, :, :]  # (B, S, D)
+    )[:, 0, :, :]
     conv_out = jax.nn.silu(conv_out)
 
     return (x + gated_value + conv_out).astype(jnp.bfloat16)
 
 
-def _make_hash_multipliers(ngram_size, seed):
+def _make_hash_multipliers(max_ngram, seed):
     """Generate deterministic odd multipliers for XOR hashing."""
     key = jax.random.PRNGKey(seed)
-    return jax.random.randint(key, (ngram_size,), 1, 1000) * 2 + 1
+    return jax.random.randint(key, (max_ngram,), 1, 1000) * 2 + 1
 
 
 def make_model_forward(config):
@@ -215,13 +197,16 @@ def make_model_forward(config):
 
     if getattr(config, "engram", None) and config.engram.enabled:
         cfg_e = config.engram
-        n_total_heads = cfg_e.n_heads * (cfg_e.ngram_size - 1)
+        ngrams = tuple(cfg_e.ngrams)
+        n_total_heads = cfg_e.n_heads * len(ngrams)
+        per_head_vocab = cfg_e.vocab_size // n_total_heads
         engram_cfg = EngramConfig(
-            vocab_sizes=jnp.array([cfg_e.vocab_size] * n_total_heads),
-            head_offsets=jnp.arange(n_total_heads) * cfg_e.vocab_size,
-            multipliers=_make_hash_multipliers(cfg_e.ngram_size, getattr(config, "seed", 42)),
-            ngram_size=cfg_e.ngram_size,
+            vocab_size=cfg_e.vocab_size,
+            head_offsets=jnp.arange(n_total_heads) * per_head_vocab,
+            multipliers=_make_hash_multipliers(max(ngrams), getattr(config, "seed", 42)),
+            ngrams=ngrams,
             n_heads=cfg_e.n_heads,
+            per_head_vocab=per_head_vocab,
             pad_id=cfg_e.pad_id,
             kernel_size=cfg_e.kernel_size,
             layer_ids=tuple(cfg_e.layer_ids),

@@ -21,13 +21,15 @@ def get_config():
     cfg.model.norm_epsilon = 1e-6
 
     cfg.model.engram.enabled = True
-    cfg.model.engram.vocab_size = 250_00
-    cfg.model.engram.ngram_size = 3
-    cfg.model.engram.n_heads = 8
-    cfg.model.engram.embed_dim = 32
-    cfg.model.engram.layer_ids = [2]
+    cfg.model.engram.vocab_size = 251520    # total vocab across all heads
+    cfg.model.engram.embed_dim = 1536 # total embedding dim (d_mem)
+    cfg.model.engram.n_heads = 8                 # heads per n-gram type
+    cfg.model.engram.ngrams = [2, 3]             # which n-grams to use
+    cfg.model.engram.layer_ids = [2, 11]         # layers to apply engram
     cfg.model.engram.kernel_size = 4
     cfg.model.engram.pad_id = 0
+    cfg.model.engram.lr_multiplier = 5.0         # 5x learning rate for engram
+    cfg.model.engram.weight_decay = 0.0          # no weight decay for engram
 
     cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "default"]
     cfg.data.tokenizer_name = "gpt2"
