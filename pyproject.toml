@@ -25,3 +25,15 @@ dependencies = [
 cpu = ["jax>=0.7.0"]
 gpu = ["jax[cuda12]>=0.7.0"]
 tpu = ["jax[tpu]>=0.7.0"]
+
+[dependency-groups]
+dev = ["ruff>=0.9.0"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501", "E731", "E741"]
+
+[tool.ruff.format]

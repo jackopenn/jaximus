@@ -53,30 +53,6 @@ def make_optimizer(cfg):
     if opt.accum_steps > 1:
         tx = optax.MultiSteps(tx, every_k_schedule=opt.accum_steps)
 
-    resolved_config = {
-        "embed": {
-            "type": "adamw",
-            "peak_lr": opt.embed.peak_lr,
-            "warmup_steps": opt.warmup_steps,
-            "decay_steps": opt.decay_steps,
-        },
-        "unembed": {
-            "type": "adamw",
-            "peak_lr": opt.unembed.peak_lr,
-            "warmup_steps": opt.warmup_steps,
-            "decay_steps": opt.decay_steps,
-        },
-        "other": {
-            "type": "muon",
-            "peak_lr": opt.other.peak_lr,
-            "warmup_steps": opt.warmup_steps,
-            "decay_steps": opt.decay_steps,
-            "momentum_start": opt.momentum_start,
-            "momentum_end": opt.momentum_end,
-            "momentum_warmup_steps": opt.momentum_warmup_steps,
-        },
-    }
-
     def make_lr_schedule_py(peak_lr):
         return warmup_stable_decay_schedule_py(peak_lr, opt.warmup_steps, opt.decay_steps, cfg.max_steps)
 
@@ -87,4 +63,4 @@ def make_optimizer(cfg):
         "momentum_other": muon_momentum_schedule_py(opt.momentum_start, opt.momentum_end, opt.momentum_warmup_steps),
     }
 
-    return tx, resolved_config, schedule_fns
+    return tx, schedule_fns

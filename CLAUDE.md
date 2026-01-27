@@ -15,9 +15,19 @@
 - Don't use large comments. Max 1 line per function definition.
 - Only comment if understanding the code is not trivial.
 - Do not create variables if only used once, prefer inlining.
+- Do not create helper functions if code is only used once, prefer inlining.
 - Keep style consistent with the file.
 - 120 character line limit
 - Readability over speed
+- Single-letter vars for dimensions: `D` (hidden), `N` (heads), `K` (kv_heads), `H` (head_dim), `L` (layers), `S` (seq_len), `V` (vocab), `I` (intermediate)
+- Type annotations: moderate use, required for dataclass fields
+- Import order: stdlib, third-party, local (enforced by ruff)
+- JAX patterns: `@jax.tree_util.register_dataclass`, `l2p()`, `jax.named_scope`
+
+### Linting
+- `uv run ruff check .` - lint
+- `uv run ruff format .` - format
+- Config in `pyproject.toml`
 
 ---
 ## Claude Suggestions

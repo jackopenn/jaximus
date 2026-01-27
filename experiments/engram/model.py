@@ -8,9 +8,7 @@ from jax import numpy as jnp
 from modelling.layers.attention import AttentionWeights, attention
 from modelling.layers.mlp import GLUWeights, glu
 from modelling.layers.norm import rms_norm
-from modelling.layers.position import apply_rope
 from parallel import l2p
-
 
 
 @jax.tree_util.register_dataclass
@@ -40,25 +38,27 @@ def init_model_weights(config, key):
         config.num_attention_heads,
         config.num_key_value_heads,
         config.head_dim,
-        config.intermediate_dim
+        config.intermediate_dim,
     )
     zeros, normal = jax.nn.initializers.zeros, jax.nn.initializers.lecun_normal()
 
     layer_weights = []
     for _ in range(config.num_layers):
-        layer_weights.append(LayerWeights(
-            attention_weights=AttentionWeights(
-                q_proj=w(next(keys), normal, (D, N * H), ("model_embed", "model_q")),
-                k_proj=w(next(keys), normal, (D, K * H), ("model_embed", "model_kv")),
-                v_proj=w(next(keys), normal, (D, K * H), ("model_embed", "model_kv")),
-                o_proj=w(next(keys), zeros, (N * H, D), ("model_q", "model_embed")),
-            ),
-            glu_weights=GLUWeights(
-                gate_proj=w(next(keys), normal, (D, I), ("model_embed", "model_intermediate")),
-                up_proj=w(next(keys), normal, (D, I), ("model_embed", "model_intermediate")),
-                down_proj=w(next(keys), zeros, (I, D), ("model_intermediate", "model_embed")),
-            ),
-        ))
+        layer_weights.append(
+            LayerWeights(
+                attention_weights=AttentionWeights(
+                    q_proj=w(next(keys), normal, (D, N * H), ("model_embed", "model_q")),
+                    k_proj=w(next(keys), normal, (D, K * H), ("model_embed", "model_kv")),
+                    v_proj=w(next(keys), normal, (D, K * H), ("model_embed", "model_kv")),
+                    o_proj=w(next(keys), zeros, (N * H, D), ("model_q", "model_embed")),
+                ),
+                glu_weights=GLUWeights(
+                    gate_proj=w(next(keys), normal, (D, I), ("model_embed", "model_intermediate")),
+                    up_proj=w(next(keys), normal, (D, I), ("model_embed", "model_intermediate")),
+                    down_proj=w(next(keys), zeros, (I, D), ("model_intermediate", "model_embed")),
+                ),
+            )
+        )
 
     return ModelWeights(
         embed=w(next(keys), normal, (V, D), ("model_vocab", "model_embed")),
@@ -76,10 +76,10 @@ def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):
         qk_norm=True,
         qk_norm_type="rms",
         qk_norm_epsilon=config.norm_epsilon,
-        num_heads=config.num_attention_heads, 
+        num_heads=config.num_attention_heads,
         num_kv_heads=config.num_key_value_heads,
         dtype="bfloat16",
-        sliding_window=None
+        sliding_window=None,
     )
     mlp_fn = partial(glu, act_fn="silu", dtype="bfloat16")
 

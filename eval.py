@@ -2,6 +2,7 @@
 Functions for evaluating the CORE metric, as described in the DCLM paper.
 https://arxiv.org/abs/2406.11794
 """
+
 import csv
 import json
 import random
@@ -11,13 +12,14 @@ import zipfile
 from pathlib import Path
 
 import jax
-import numpy as np
-from tqdm import tqdm
 import jax.numpy as jnp
+import numpy as np
 import optax
 import yaml
-from jax.sharding import PartitionSpec as P, reshard
+from jax.sharding import PartitionSpec as P
+from jax.sharding import reshard
 from jinja2 import Template
+from tqdm import tqdm
 
 from modelling.layers.position import precompute_rope_embeddings
 
@@ -75,28 +77,34 @@ def load_random_baselines(bundle_path):
     return baselines
 
 
-MC_TEMPLATE = Template("""
+MC_TEMPLATE = Template(
+    """
 {%- for example in fewshot_examples -%}
 {{ example.query }}{{ continuation_delimiter }}{{ example.choices[example.gold] }}
 
 {% endfor -%}
-{{ item.query }}{{ continuation_delimiter }}{{ choice }}""".strip())
+{{ item.query }}{{ continuation_delimiter }}{{ choice }}""".strip()
+)
 
 
-SCHEMA_TEMPLATE = Template("""
+SCHEMA_TEMPLATE = Template(
+    """
 {%- for example in fewshot_examples -%}
 {{ example.context_options[example.gold] }}{{ continuation_delimiter }}{{ example.continuation }}
 
 {% endfor -%}
-{{ context }}{{ continuation_delimiter }}{{ item.continuation }}""".strip())
+{{ context }}{{ continuation_delimiter }}{{ item.continuation }}""".strip()
+)
 
 
-LM_TEMPLATE = Template("""
+LM_TEMPLATE = Template(
+    """
 {%- for example in fewshot_examples -%}
 {{ example.context | trim }}{{ continuation_delimiter }}{{ example.continuation }}
 
 {% endfor -%}
-{{ item.context | trim }}{{ continuation_delimiter }}{% if include_continuation %}{{ item.continuation }}{% endif %}""".strip())
+{{ item.context | trim }}{{ continuation_delimiter }}{% if include_continuation %}{{ item.continuation }}{% endif %}""".strip()
+)
 
 
 def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
@@ -283,11 +291,19 @@ def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_si
             is_correct = np.all(pred_tokens == actual_tokens)
         else:
             choice_losses = []
+            skip_example = False
             for c in range(n_choices):
                 row = row_offset + c
                 si, ei = start_idxs[row], end_idxs[row]
-                mean_loss = losses_np[row, si - 1 : ei - 1].mean()
-                choice_losses.append(mean_loss)
+                # TODO: this happens when one choice is a prefix of another after tokenization.
+                # We should handle this properly, e.g. by scoring full sequences instead of just divergent tokens.
+                if si >= ei:
+                    skip_example = True
+                    break
+                choice_losses.append(losses_np[row, si - 1 : ei - 1].mean())
+            if skip_example:
+                row_offset += n_choices
+                continue
             pred_idx = choice_losses.index(min(choice_losses))
             is_correct = pred_idx == gold_labels[ex_idx]
 
@@ -297,7 +313,7 @@ def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_si
     t4 = time.perf_counter() if timing else 0
 
     if timing:
-        print(f"stack: {t1-t0:.3f}s, forward: {t2-t1:.3f}s, transfer: {t3-t2:.3f}s, extract: {t4-t3:.3f}s")
+        print(f"stack: {t1 - t0:.3f}s, forward: {t2 - t1:.3f}s, transfer: {t3 - t2:.3f}s, extract: {t4 - t3:.3f}s")
 
     return results
 
@@ -375,7 +391,7 @@ def evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len
             pending_indices = []
             pending_rows = 0
             if main_process:
-                iterator.set_postfix(acc=f"{sum(correct)/len(correct):.2%}")
+                iterator.set_postfix(acc=f"{sum(correct) / len(correct):.2%}")
 
         pending_indices.append(idx)
         pending_rows += num_choices
