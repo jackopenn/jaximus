@@ -34,7 +34,7 @@ def make_optimizer(cfg):
                     b2=0.95,
                 ),
             },
-            jax.tree.map_with_path(lambda path, _: "embed" if path[0].name is ("embed", "unembed") else "other")
+            jax.tree.map_with_path(lambda path, _: "embed" if path[0].name in ("embed", "unembed") else "other")
         ),
     )
     if opt.accum_steps > 1:
