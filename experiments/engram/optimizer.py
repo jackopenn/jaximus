@@ -1,7 +1,7 @@
 import jax
 import optax
+import muon
 
-from muon import muon
 from scheduler import (
     warmup_stable_decay_schedule,
     warmup_stable_decay_schedule_py,
@@ -34,7 +34,7 @@ def make_optimizer(cfg):
                     b2=0.95,
                 ),
             },
-            jax.tree.map_with_path(lambda path, _: "embed" if path[0].name in ("embed", "unembed") else "other")
+            lambda state: jax.tree.map_with_path(lambda path, _: "embed" if path[0].name in ("embed", "unembed") else "other", state)
         ),
     )
     if opt.accum_steps > 1:
