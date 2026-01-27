@@ -177,6 +177,7 @@ def engram_forward(x, input_ids, engram_weights, engram_cfg, hidden_dim):
         rhs_dilation=(1, dilation),
         dimension_numbers=("NHWC", "HWIO", "NHWC"),
         feature_group_count=D,
+        out_sharding=l2p(("batch", None, "act_seq", "act_embed")),
     )[:, 0, :, :]
     conv_out = jax.nn.silu(conv_out)
 
