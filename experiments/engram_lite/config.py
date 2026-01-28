@@ -10,17 +10,17 @@ def get_config():
     cfg.exp_name = "engram-lite"
 
     cfg.model.vocab_size = 50304
-    cfg.model.num_layers = 12
-    cfg.model.hidden_dim = 1536
-    cfg.model.num_attention_heads = 12
-    cfg.model.num_key_value_heads = 12
+    cfg.model.num_layers = 16
+    cfg.model.hidden_dim = 2048
+    cfg.model.num_attention_heads = 16
+    cfg.model.num_key_value_heads = 16
     cfg.model.head_dim = 128
     cfg.model.intermediate_dim = lambda: int(8 / 3 * cfg.model.hidden_dim)
     cfg.model.max_seq_len = 2048
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
 
-    cfg.model.engram.enabled = True
+    cfg.model.engram.enabled = False
     cfg.model.engram.table_multiplier = 5  # table_size = vocab_size * 5
     cfg.model.engram.lambda_init = 0.1  # initial value for all lambdas
 
@@ -28,17 +28,17 @@ def get_config():
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
 
-    tokens_per_batch = 96 * 8192
-    cfg.data.batch_size = 96
+    tokens_per_batch = 160 * 8192
+    cfg.data.batch_size = 64
     cfg.optimizer.accum_steps = lambda: tokens_per_batch // (cfg.data.batch_size * cfg.model.max_seq_len)
 
     cfg.optimizer.weight_decay = 0.1
     cfg.optimizer.clip_grad_norm = 1.0
     cfg.optimizer.warmup_steps = lambda: int(0.02 * cfg.max_steps)
     cfg.optimizer.decay_steps = lambda: int(0.4 * cfg.max_steps)
-    cfg.optimizer.peak_lr = 9.503e-4
+    cfg.optimizer.peak_lr = 8.825e-4
 
-    cfg.max_steps = int(8.92e9 // tokens_per_batch)
+    cfg.max_steps = int(20.76e9 // tokens_per_batch)
     cfg.generate_every = 500
     cfg.eval_every = 1000
     cfg.eval_max_per_task = 500
