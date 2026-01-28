@@ -16,7 +16,7 @@ from parallel import l2p
 @dataclass
 class EngramWeights:
     embeddings: jax.Array  # (vocab_size * table_multiplier, hidden_dim)
-    lambdas: jax.Array  # (num_layers,) - per-layer bigram scaling
+    lambdas: jax.Array  # (num_layers,) - per-layer ngram scaling
 
 
 @jax.tree_util.register_dataclass
@@ -98,11 +98,12 @@ def init_model_weights(config, key):
     )
 
 
-def bigram_hash(input_ids, table_size):
-    """Simple bigram hash: (36313*curr) ^ (27191*prev) % (table_size - 1)."""
-    curr = input_ids[:, 1:]
-    prev = input_ids[:, :-1]
-    h = (36313 * curr) ^ (27191 * prev)
+def trigram_hash(input_ids, table_size):
+    """Trigram hash: (36313*curr) ^ (27191*prev) ^ (17093*prev2) % (table_size - 1)."""
+    curr = input_ids[:, 2:]
+    prev = input_ids[:, 1:-1]
+    prev2 = input_ids[:, :-2]
+    h = (36313 * curr) ^ (27191 * prev) ^ (17093 * prev2)
     return h % (table_size - 1)
 
 
@@ -157,7 +158,7 @@ def _model_forward(x, weights, config, rope_cos, rope_sin, mask=None):
 
 
 def _model_forward_with_engram_lite(x, weights, config, rope_cos, rope_sin, table_size, mask=None):
-    """Forward pass with engram-lite: simple bigram hash + per-layer lambdas."""
+    """Forward pass with engram-lite: trigram hash + per-layer lambdas."""
     norm_fn = partial(rms_norm, weights=None, eps=config.norm_epsilon)
     attention_fn = partial(
         attention,
@@ -176,10 +177,10 @@ def _model_forward_with_engram_lite(x, weights, config, rope_cos, rope_sin, tabl
     input_ids = x
     x = weights.embed.at[x].get(out_sharding=l2p(("batch", "act_seq", "act_embed"))).astype(jnp.bfloat16)
 
-    # Compute bigram embeddings once (pad first position with zeros)
-    hash_indices = bigram_hash(input_ids, table_size)
-    hash_indices = jnp.pad(hash_indices, ((0, 0), (1, 0)), constant_values=0)
-    bigram_embed = (
+    # Compute trigram embeddings once (pad first two positions with zeros)
+    hash_indices = trigram_hash(input_ids, table_size)
+    hash_indices = jnp.pad(hash_indices, ((0, 0), (2, 0)), constant_values=0)
+    ngram_embed = (
         weights.engram.embeddings.at[hash_indices]
         .get(out_sharding=l2p(("batch", "act_seq", "act_embed")))
         .astype(jnp.bfloat16)
@@ -188,9 +189,9 @@ def _model_forward_with_engram_lite(x, weights, config, rope_cos, rope_sin, tabl
     x = norm_fn(x)
 
     for layer_idx, layer_weights in enumerate(weights.layer_weights):
-        # Bigram injection before each block
+        # Trigram injection before each block
         lam = weights.engram.lambdas[layer_idx].astype(jnp.bfloat16)
-        x = x + lam * bigram_embed
+        x = x + lam * ngram_embed
 
         residual = x
         x = norm_fn(x)
