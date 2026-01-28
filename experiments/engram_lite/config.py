@@ -15,7 +15,7 @@ def get_config():
     cfg.model.num_attention_heads = 16
     cfg.model.num_key_value_heads = 16
     cfg.model.head_dim = 128
-    cfg.model.intermediate_dim = lambda: int(8 / 3 * cfg.model.hidden_dim)
+    cfg.model.intermediate_dim = lambda: round(8 / 3 * cfg.model.hidden_dim / 64) * 64
     cfg.model.max_seq_len = 2048
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
