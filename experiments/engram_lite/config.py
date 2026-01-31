@@ -22,7 +22,8 @@ def get_config():
 
     cfg.model.engram.enabled = False
     cfg.model.engram.table_multiplier = 5  # table_size = vocab_size * 5
-    cfg.model.engram.lambda_init = 0.1  # initial value for all lambdas
+    cfg.model.engram.lambda_init = 0.1  # initial value for all lambdas (for residual injection)
+    cfg.model.engram.injection = "residual"  # "residual" (original) or "attention" (per-head gated)
 
     cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "default"]
     cfg.data.tokenizer_name = "gpt2"

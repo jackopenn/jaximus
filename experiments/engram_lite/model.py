@@ -5,18 +5,18 @@ from typing import List, Optional
 import jax
 from jax import numpy as jnp
 
-from modelling.layers.attention import AttentionWeights, attention
+from modelling.layers.attention import AttentionWeights, attention, make_attention_mask
 from modelling.layers.mlp import GLUWeights, glu
 from modelling.layers.norm import rms_norm
-from modelling.layers.position import precompute_rope_embeddings
+from modelling.layers.position import apply_rope, precompute_rope_embeddings
 from parallel import l2p
 
 
 @jax.tree_util.register_dataclass
 @dataclass
 class EngramWeights:
-    embeddings: jax.Array  # (vocab_size * table_multiplier, hidden_dim)
-    lambdas: jax.Array  # (num_layers,) - per-layer bigram scaling
+    embeddings: jax.Array  # (vocab_size * table_multiplier, embed_dim) - embed_dim is head_dim for attention, hidden_dim for residual
+    lambdas: jax.Array  # (num_layers,) - per-layer bigram scaling (residual mode only)
 
 
 @jax.tree_util.register_dataclass
@@ -38,7 +38,9 @@ class ModelWeights:
 def _init_engram_weights(config, key):
     """Initialize engram-lite weights."""
     table_size = config.vocab_size * config.engram.table_multiplier
-    D, L = config.hidden_dim, config.num_layers
+    L = config.num_layers
+    injection = getattr(config.engram, "injection", "residual")
+    embed_dim = config.head_dim if injection == "attention" else config.hidden_dim
 
     def w(init_fn, shape, sharding):
         return init_fn(key, shape, dtype=jnp.float32, out_sharding=l2p(sharding))
@@ -47,7 +49,7 @@ def _init_engram_weights(config, key):
     lambda_init = jax.nn.initializers.constant(config.engram.lambda_init)
 
     return EngramWeights(
-        embeddings=w(zeros, (table_size, D), ("model_engram_vocab", "model_embed")),
+        embeddings=w(zeros, (table_size, embed_dim), ("model_engram_vocab", "model_embed")),
         lambdas=w(lambda_init, (L,), ()),
     )
 
@@ -114,6 +116,15 @@ def make_model_forward(config):
 
     if getattr(config, "engram", None) and config.engram.enabled:
         table_size = config.vocab_size * config.engram.table_multiplier
+        injection = getattr(config.engram, "injection", "residual")
+        if injection == "attention":
+            return partial(
+                _model_forward_with_engram_attention,
+                config=config,
+                rope_cos=rope_cos,
+                rope_sin=rope_sin,
+                table_size=table_size,
+            )
         return partial(
             _model_forward_with_engram_lite, config=config, rope_cos=rope_cos, rope_sin=rope_sin, table_size=table_size
         )
@@ -195,6 +206,96 @@ def _model_forward_with_engram_lite(x, weights, config, rope_cos, rope_sin, tabl
         residual = x
         x = norm_fn(x)
         x = attention_fn(x, layer_weights.attention_weights, mask=mask)
+        x = x + residual
+
+        residual = x
+        x = norm_fn(x)
+        x = mlp_fn(x, layer_weights.glu_weights)
+        x = x + residual
+
+    x = norm_fn(x)
+    return jnp.matmul(x, weights.unembed.astype(jnp.bfloat16), out_sharding=l2p(("batch", "act_seq", "act_vocab")))
+
+
+def _attention_with_engram(
+    x, weights, engram_embed, rope_cos, rope_sin, qk_norm_epsilon, num_heads, num_kv_heads, mask=None
+):
+    """Attention with engram injected into values, gated by per-head prev-token attention."""
+    batch, seq_len, _ = x.shape
+    head_dim = weights.q_proj.shape[1] // num_heads
+    assert engram_embed.shape[-1] == head_dim, f"engram dim {engram_embed.shape[-1]} != head_dim {head_dim}"
+
+    q = jnp.matmul(x, weights.q_proj.astype(jnp.bfloat16), out_sharding=l2p(("batch", "seq", "act_q")))
+    q = q.reshape(batch, seq_len, num_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
+
+    k = jnp.matmul(x, weights.k_proj.astype(jnp.bfloat16), out_sharding=l2p(("batch", "seq", "act_kv")))
+    k = k.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
+
+    v = jnp.matmul(x, weights.v_proj.astype(jnp.bfloat16), out_sharding=l2p(("batch", "seq", "act_kv")))
+    v = v.reshape(batch, seq_len, num_kv_heads, head_dim, out_sharding=l2p(("batch", "seq", "act_kv", "act_head")))
+
+    cos, sin = rope_cos[:, :seq_len, :, :], rope_sin[:, :seq_len, :, :]
+    q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
+
+    q = rms_norm(q, weights=None, eps=qk_norm_epsilon)
+    k = rms_norm(k, weights=None, eps=qk_norm_epsilon)
+
+    if num_kv_heads != num_heads:
+        k = jnp.repeat(k, num_heads // num_kv_heads, axis=2)
+        v = jnp.repeat(v, num_heads // num_kv_heads, axis=2)
+
+    scores = jnp.einsum("bshd,bthd->bhst", q, k) / jnp.sqrt(head_dim).astype(jnp.bfloat16)
+    causal_mask = jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
+    scores = jnp.where(causal_mask, scores, -1e9)
+    if mask is not None:
+        scores = jnp.where(make_attention_mask(mask), scores, -1e9)
+    attn_weights = jax.nn.softmax(scores, axis=-1).astype(jnp.bfloat16)
+
+    # gate[b, h, i] = attn_weights[b, h, i, i-1] (attention to previous token)
+    seq_idx = jnp.arange(seq_len)
+    prev_attn = attn_weights[:, :, seq_idx[1:], seq_idx[:-1]]  # (batch, heads, seq-1)
+    prev_attn = jnp.pad(prev_attn, ((0, 0), (0, 0), (1, 0)))  # (batch, heads, seq)
+    gate = prev_attn.transpose(0, 2, 1)[:, :, :, None]  # (batch, seq, heads, 1)
+
+    # engram_embed: (batch, seq, head_dim) -> broadcast to (batch, seq, heads, head_dim)
+    v = v + gate * engram_embed[:, :, None, :]
+
+    att = jnp.einsum("bhst,bthd->bshd", attn_weights, v)
+    att = att.reshape(batch, seq_len, num_heads * head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
+    return jnp.matmul(att, weights.o_proj.astype(jnp.bfloat16), out_sharding=l2p(("batch", "seq", "act_embed")))
+
+
+def _model_forward_with_engram_attention(x, weights, config, rope_cos, rope_sin, table_size, mask=None):
+    """Forward pass with engram injected into attention values, gated by per-head prev-token attention."""
+    norm_fn = partial(rms_norm, weights=None, eps=config.norm_epsilon)
+    attention_engram_fn = partial(
+        _attention_with_engram,
+        rope_cos=rope_cos,
+        rope_sin=rope_sin,
+        qk_norm_epsilon=config.norm_epsilon,
+        num_heads=config.num_attention_heads,
+        num_kv_heads=config.num_key_value_heads,
+    )
+    mlp_fn = partial(glu, act_fn="silu", dtype="bfloat16")
+
+    input_ids = x
+    x = weights.embed.at[x].get(out_sharding=l2p(("batch", "act_seq", "act_embed"))).astype(jnp.bfloat16)
+
+    # Compute bigram embeddings once (pad first position with zeros)
+    hash_indices = bigram_hash(input_ids, table_size)
+    hash_indices = jnp.pad(hash_indices, ((0, 0), (1, 0)), constant_values=0)
+    bigram_embed = (
+        weights.engram.embeddings.at[hash_indices]
+        .get(out_sharding=l2p(("batch", "act_seq", "act_embed")))
+        .astype(jnp.bfloat16)
+    )
+
+    x = norm_fn(x)
+
+    for layer_weights in weights.layer_weights:
+        residual = x
+        x = norm_fn(x)
+        x = attention_engram_fn(x, layer_weights.attention_weights, engram_embed=bigram_embed, mask=mask)
         x = x + residual
 
         residual = x
