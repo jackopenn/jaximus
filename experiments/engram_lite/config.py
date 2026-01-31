@@ -29,7 +29,7 @@ def get_config():
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
 
-    tokens_per_batch = 160 * 8192
+    tokens_per_batch = 96 * 8192
     cfg.data.batch_size = 64
     cfg.optimizer.accum_steps = lambda: tokens_per_batch // (cfg.data.batch_size * cfg.model.max_seq_len)
 
