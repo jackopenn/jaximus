@@ -3,7 +3,9 @@ from functools import partial
 from typing import List, Optional
 
 import jax
+import numpy as np
 from jax import numpy as jnp
+from tokenizers import Regex, normalizers
 
 from modelling.layers.attention import AttentionWeights, attention, make_attention_mask
 from modelling.layers.mlp import GLUWeights, glu
@@ -12,11 +14,53 @@ from modelling.layers.position import apply_rope, precompute_rope_embeddings
 from parallel import l2p
 
 
+class CompressedTokenizer:
+    """Builds lookup table mapping raw token IDs to normalized canonical IDs."""
+
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        SENTINEL = "\ue000"
+        self.normalizer = normalizers.Sequence(
+            [
+                normalizers.NFKC(),
+                normalizers.NFD(),
+                normalizers.StripAccents(),
+                normalizers.Lowercase(),
+                normalizers.Replace(Regex(r"[ \t\r\n]+"), " "),
+                normalizers.Replace(Regex(r"^ $"), SENTINEL),
+                normalizers.Strip(),
+                normalizers.Replace(SENTINEL, " "),
+            ]
+        )
+        self.lookup_table, self.num_new_tokens = self._build_lookup_table()
+
+    def _build_lookup_table(self):
+        old2new, key2new, new_tokens = {}, {}, []
+        vocab_size = len(self.tokenizer)
+        for tid in range(vocab_size):
+            text = self.tokenizer.decode([tid], skip_special_tokens=False)
+            if "�" in text:
+                key = self.tokenizer.convert_ids_to_tokens(tid)
+            else:
+                norm = self.normalizer.normalize_str(text)
+                key = norm if norm else text
+            nid = key2new.get(key)
+            if nid is None:
+                nid = len(new_tokens)
+                key2new[key] = nid
+                new_tokens.append(key)
+            old2new[tid] = nid
+        lookup = np.empty(vocab_size, dtype=np.int64)
+        for tid in range(vocab_size):
+            lookup[tid] = old2new[tid]
+        return lookup, len(new_tokens)
+
+
 @jax.tree_util.register_dataclass
 @dataclass
 class EngramWeights:
-    embeddings: jax.Array  # (vocab_size * table_multiplier, embed_dim) - embed_dim is head_dim for attention, hidden_dim for residual
-    lambdas: jax.Array  # (num_layers,) - per-layer bigram scaling (residual mode only)
+    embeddings: jax.Array  # (vocab_size * table_multiplier, embed_dim)
+    lambdas: jax.Array  # (num_layers,) - per-layer scalar scaling
 
 
 @jax.tree_util.register_dataclass
@@ -100,15 +144,17 @@ def init_model_weights(config, key):
     )
 
 
-def bigram_hash(input_ids, table_size):
+def bigram_hash(input_ids, table_size, compression_map=None):
     """Simple bigram hash: (36313*curr) ^ (27191*prev) % (table_size - 1)."""
+    if compression_map is not None:
+        input_ids = compression_map.at[input_ids].get(out_sharding=l2p(("batch", "seq")))
     curr = input_ids[:, 1:]
     prev = input_ids[:, :-1]
     h = (36313 * curr) ^ (27191 * prev)
     return h % (table_size - 1)
 
 
-def make_model_forward(config):
+def make_model_forward(config, tokenizer=None):
     """Factory that returns forward function with precomputed rope embeddings."""
     rope_cos, rope_sin = precompute_rope_embeddings(
         config.max_seq_len, config.head_dim, config.rope_theta, "bfloat16", sharding=l2p(())
@@ -116,6 +162,9 @@ def make_model_forward(config):
 
     if getattr(config, "engram", None) and config.engram.enabled:
         table_size = config.vocab_size * config.engram.table_multiplier
+        compression_map = None
+        if tokenizer and getattr(config.engram, "token_compression", False):
+            compression_map = jnp.array(CompressedTokenizer(tokenizer).lookup_table)
         injection = getattr(config.engram, "injection", "residual")
         if injection == "attention":
             return partial(
@@ -124,9 +173,15 @@ def make_model_forward(config):
                 rope_cos=rope_cos,
                 rope_sin=rope_sin,
                 table_size=table_size,
+                compression_map=compression_map,
             )
         return partial(
-            _model_forward_with_engram_lite, config=config, rope_cos=rope_cos, rope_sin=rope_sin, table_size=table_size
+            _model_forward_with_engram_lite,
+            config=config,
+            rope_cos=rope_cos,
+            rope_sin=rope_sin,
+            table_size=table_size,
+            compression_map=compression_map,
         )
 
     return partial(_model_forward, config=config, rope_cos=rope_cos, rope_sin=rope_sin)
@@ -167,7 +222,9 @@ def _model_forward(x, weights, config, rope_cos, rope_sin, mask=None):
     return jnp.matmul(x, weights.unembed.astype(jnp.bfloat16), out_sharding=l2p(("batch", "act_seq", "act_vocab")))
 
 
-def _model_forward_with_engram_lite(x, weights, config, rope_cos, rope_sin, table_size, mask=None):
+def _model_forward_with_engram_lite(
+    x, weights, config, rope_cos, rope_sin, table_size, compression_map=None, mask=None
+):
     """Forward pass with engram-lite: simple bigram hash + per-layer lambdas."""
     norm_fn = partial(rms_norm, weights=None, eps=config.norm_epsilon)
     attention_fn = partial(
@@ -188,7 +245,7 @@ def _model_forward_with_engram_lite(x, weights, config, rope_cos, rope_sin, tabl
     x = weights.embed.at[x].get(out_sharding=l2p(("batch", "act_seq", "act_embed"))).astype(jnp.bfloat16)
 
     # Compute bigram embeddings once (pad first position with zeros)
-    hash_indices = bigram_hash(input_ids, table_size)
+    hash_indices = bigram_hash(input_ids, table_size, compression_map)
     hash_indices = jnp.pad(hash_indices, ((0, 0), (1, 0)), constant_values=0)
     bigram_embed = (
         weights.engram.embeddings.at[hash_indices]
@@ -199,7 +256,6 @@ def _model_forward_with_engram_lite(x, weights, config, rope_cos, rope_sin, tabl
     x = norm_fn(x)
 
     for layer_idx, layer_weights in enumerate(weights.layer_weights):
-        # Bigram injection before each block
         lam = weights.engram.lambdas[layer_idx].astype(jnp.bfloat16)
         x = x + lam * bigram_embed
 
@@ -265,7 +321,9 @@ def _attention_with_engram(
     return jnp.matmul(att, weights.o_proj.astype(jnp.bfloat16), out_sharding=l2p(("batch", "seq", "act_embed")))
 
 
-def _model_forward_with_engram_attention(x, weights, config, rope_cos, rope_sin, table_size, mask=None):
+def _model_forward_with_engram_attention(
+    x, weights, config, rope_cos, rope_sin, table_size, compression_map=None, mask=None
+):
     """Forward pass with engram injected into attention values, gated by per-head prev-token attention."""
     norm_fn = partial(rms_norm, weights=None, eps=config.norm_epsilon)
     attention_engram_fn = partial(
@@ -282,7 +340,7 @@ def _model_forward_with_engram_attention(x, weights, config, rope_cos, rope_sin,
     x = weights.embed.at[x].get(out_sharding=l2p(("batch", "act_seq", "act_embed"))).astype(jnp.bfloat16)
 
     # Compute bigram embeddings once (pad first position with zeros)
-    hash_indices = bigram_hash(input_ids, table_size)
+    hash_indices = bigram_hash(input_ids, table_size, compression_map)
     hash_indices = jnp.pad(hash_indices, ((0, 0), (1, 0)), constant_values=0)
     bigram_embed = (
         weights.engram.embeddings.at[hash_indices]

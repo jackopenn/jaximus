@@ -74,7 +74,7 @@ def train(cfg, model_module, optimizer_module):
     model_config = cfg.model
 
     # create model forward (after mesh is set for rope sharding)
-    model_forward = model_module.make_model_forward(model_config)
+    model_forward = model_module.make_model_forward(model_config, tokenizer)
     model_weights = model_module.init_model_weights(model_config, jax.random.PRNGKey(cfg.seed))
     tx, schedule_fns = optimizer_module.make_optimizer(cfg)
     opt_weights = tx.init(model_weights)

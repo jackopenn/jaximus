@@ -20,10 +20,11 @@ def get_config():
     cfg.model.rope_theta = 10000.0
     cfg.model.norm_epsilon = 1e-6
 
-    cfg.model.engram.enabled = False
+    cfg.model.engram.enabled = True
     cfg.model.engram.table_multiplier = 5  # table_size = vocab_size * 5
-    cfg.model.engram.lambda_init = 0.1  # initial value for all lambdas (for residual injection)
-    cfg.model.engram.injection = "attention"  # "residual" (original) or "attention" (per-head gated)
+    cfg.model.engram.lambda_init = 0.1  # initial value for per-layer scalar lambda
+    cfg.model.engram.injection = "residual"  # "residual" or "attention" (per-head gated)
+    cfg.model.engram.token_compression = True
 
     cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "default"]
     cfg.data.tokenizer_name = "gpt2"

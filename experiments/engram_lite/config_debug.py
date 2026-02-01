@@ -23,6 +23,8 @@ def get_config():
     cfg.model.engram.enabled = True
     cfg.model.engram.table_multiplier = 5
     cfg.model.engram.lambda_init = 0.1
+    cfg.model.engram.injection = "residual"  # "residual" or "attention"
+    cfg.model.engram.token_compression = True
 
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-10BT"]
     cfg.data.tokenizer_name = "gpt2"
