@@ -70,7 +70,7 @@ def get_config():
 
     cfg.max_steps = _compute_max_steps
 
-    cfg.generate_every = 500
+    cfg.generate_every = -1
     cfg.eval_every = -1
     cfg.eval_max_per_task = 500
     cfg.eval_batch_size = 128
