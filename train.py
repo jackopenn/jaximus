@@ -103,7 +103,7 @@ def train(cfg, model_module, optimizer_module):
     cfg_dict["num_flops_per_token"] = num_flops_per_token
     if main_process:
         project_name = cfg.wandb_project if cfg.wandb_project else "transformers"
-        wandb_run = wandb.init(project=project_name, config=cfg_dict) if cfg.wandb else DummyWandb()
+        wandb_run = wandb.init(project=project_name, name=cfg.exp_name, config=cfg_dict) if cfg.wandb else DummyWandb()
         train_logger = MetricLogger(
             cfg.data.batch_size,
             accum_steps,
