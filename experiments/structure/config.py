@@ -45,24 +45,26 @@ def get_config():
     cfg.max_flops = 1e18
 
     def _compute_max_steps():
-        D, L, N, K, H, I = (
+        D, L, N, K, H, I, V = (
             cfg.model.hidden_dim,
             cfg.model.num_layers,
             cfg.model.num_attention_heads,
             cfg.model.num_key_value_heads,
             cfg.model.head_dim,
             cfg.model.intermediate_dim,
+            cfg.model.vocab_size,
         )
         S = cfg.model.max_seq_len
         W = cfg.model.sliding_window if cfg.model.sliding_window else S
 
-        # Core params (per layer: qkvo projections + up/down MLP)
-        params_per_layer = (D * N * H) + 2 * (D * K * H) + (N * H * D) + 2 * (D * I)
-        num_core_params = L * params_per_layer
+        # Estimate total params and subtract embedding
+        embed_params = D * V
+        layer_params = (D * N * H) + 2 * (D * K * H) + (N * H * D) + 2 * (D * I) + 4 * D
+        total_params = embed_params + L * layer_params + D + (D * V)
+        non_embed_params = total_params - embed_params
 
-        # FLOPs per token: 6*params (fwd+bwd matmuls) + attention cost
-        effective_seq = min(W, S)
-        num_flops_per_token = 6 * num_core_params + L * 12 * N * H * effective_seq
+        # FLOPs per token: 6 * non_embed_params + 12 * l * h * q * t (attention)
+        num_flops_per_token = 6 * non_embed_params + 12 * L * N * H * min(W, S)
 
         tokens_per_step = cfg.data.batch_size * cfg.optimizer.accum_steps * cfg.data.max_length
         flops_per_step = num_flops_per_token * tokens_per_step
