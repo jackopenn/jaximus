@@ -198,6 +198,9 @@ def train(cfg, model_module, optimizer_module):
 
             step += 1
 
+    # Sync before final operations
+    jax.experimental.multihost_utils.sync_global_devices("loop_complete")
+
     # checkpoint at max steps (ignore if we just did on last step)
     if cfg.checkpoint_every > 0 and cfg.max_steps % cfg.checkpoint_every != 0:
         checkpoint_manager.save(cfg.max_steps, args=ocp.args.StandardSave(model_weights))
@@ -225,6 +228,9 @@ def train(cfg, model_module, optimizer_module):
     if main_process:
         train_logger.flush()
         wandb_run.finish()
+
+    # Sync all workers before exit to prevent coordination service errors
+    jax.experimental.multihost_utils.sync_global_devices("train_complete")
 
 
 def main(cfg):
