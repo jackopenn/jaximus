@@ -26,7 +26,7 @@ def get_config():
     cfg.model.norm_epsilon = 1e-6
     cfg.model.sliding_window = None  # None=full, or 256/1024
 
-    cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-100BT"]
+    cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "default"]
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
 
