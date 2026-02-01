@@ -1,0 +1,92 @@
+# Scaling Laws Sweep: Depth x FLOP Budget x Sliding Window
+# 4 FLOP budgets x 7 depths x 3 window variants = 84 runs
+
+# Full attention (sliding_window=None)
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=1e18
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=1e18
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=1e18
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=1e18
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=1e18
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=1e18
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=1e18
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=2.15e18
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=2.15e18
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=2.15e18
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=2.15e18
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=2.15e18
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=2.15e18
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=2.15e18
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=4.64e18
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=4.64e18
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=4.64e18
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=4.64e18
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=4.64e18
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=4.64e18
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=4.64e18
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=1e19
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=1e19
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=1e19
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=1e19
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=1e19
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=1e19
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=1e19
+
+# Sliding window = 256
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=1e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=1e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=1e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=1e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=1e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=1e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=1e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=2.15e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=2.15e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=2.15e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=2.15e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=2.15e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=2.15e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=2.15e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=4.64e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=4.64e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=4.64e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=4.64e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=4.64e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=4.64e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=4.64e18 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=1e19 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=1e19 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=1e19 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=1e19 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=1e19 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=1e19 model.sliding_window=256
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=1e19 model.sliding_window=256
+
+# Sliding window = 1024
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=1e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=1e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=1e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=1e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=1e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=1e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=1e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=2.15e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=2.15e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=2.15e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=2.15e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=2.15e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=2.15e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=2.15e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=4.64e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=4.64e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=4.64e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=4.64e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=4.64e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=4.64e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=4.64e18 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=8 max_flops=1e19 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=10 max_flops=1e19 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=12 max_flops=1e19 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=14 max_flops=1e19 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=16 max_flops=1e19 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=18 max_flops=1e19 model.sliding_window=1024
+python train.py --config experiments/structure/config.py model.num_layers=20 max_flops=1e19 model.sliding_window=1024

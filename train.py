@@ -92,7 +92,8 @@ def train(cfg, model_module, optimizer_module):
         model_config.head_dim,
         model_config.max_seq_len,
     )
-    num_flops_per_token = 6 * (num_params - num_embed_params) + L * 12 * N * H * S
+    W = getattr(model_config, "sliding_window", None) or S
+    num_flops_per_token = 6 * (num_params - num_embed_params) + L * 12 * N * H * min(W, S)
     if main_process:
         print(f"{num_params=}\n{num_flops_per_token=}\n")
 

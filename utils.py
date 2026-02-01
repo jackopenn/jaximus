@@ -86,6 +86,8 @@ class MetricLogger:
         self.prev_metrics = None
         self.tokens_consumed = 0
         self.max_steps = max_steps
+        self.flops_per_step = num_flops_per_token * batch_size * accum_steps * sequence_length
+        self.total_flops = 0
 
     def _human_format(self, num: float, divide_by_1024: bool = False) -> str:
         # https://github.com/huggingface/nanotron/blob/7bc9923285a03069ebffe994379a311aceaea546/src/nanotron/logging/base.py#L268
@@ -111,6 +113,8 @@ class MetricLogger:
         step = metrics.pop("step")
         # move to cpu - to not block
         metrics = jax.tree_util.tree_map(lambda x: float(x), metrics)
+        self.total_flops += self.flops_per_step
+        metrics["total_flops"] = self.total_flops
         metrics["tokens_consumed"] = self.tokens_consumed
         metrics["tokens_per_second"] = self.tokens_per_batch / metrics["step_time"]
         metrics["tokens_per_second_per_device"] = metrics["tokens_per_second"] / self.num_devices
