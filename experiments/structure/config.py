@@ -71,11 +71,11 @@ def get_config():
     cfg.max_steps = _compute_max_steps
 
     cfg.generate_every = 500
-    cfg.eval_every = 1000
+    cfg.eval_every = -1
     cfg.eval_max_per_task = 500
     cfg.eval_batch_size = 128
     cfg.eval_data_path = "cache"
-    cfg.checkpoint_every = 5000
+    cfg.checkpoint_every = -1
     cfg.checkpoint_dir = lambda: f"gs://trm-jax-123/jaximus/checkpoints/structure/{cfg.exp_name}"
     cfg.xpu = "v4"
     cfg.wandb = True
