@@ -103,6 +103,8 @@ def train(cfg, model_module, optimizer_module):
             streaming=True,
             split=val_split or "train",
             data_files=val_data_files,
+            num_shards=1,
+            shard_index=0,
         )
         val_iter = iter(val_dataset)
 
