@@ -3,7 +3,8 @@
 
 # Full attention
 # num_layers=18 max_flops=1e18 batch_size=64
-num_layers=20 max_flops=1e18 batch_size=64
+num_layers=20 max_flops=1e17 batch_size=64
+# num_layers=20 max_flops=1e18 batch_size=64
 num_layers=8 max_flops=2e18 batch_size=256
 num_layers=10 max_flops=2e18 batch_size=256
 num_layers=12 max_flops=2e18 batch_size=128
