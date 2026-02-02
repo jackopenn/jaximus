@@ -8,6 +8,7 @@ from jax import numpy as jnp
 from modelling.layers.attention import AttentionWeights, attention
 from modelling.layers.mlp import MLPWeights, mlp
 from modelling.layers.norm import rms_norm
+from modelling.layers.position import precompute_rope_embeddings
 from parallel import l2p
 
 
@@ -77,6 +78,13 @@ def init_model_weights(config, key):
             ("model_embed", "model_vocab"),
         ),
     )
+
+
+def make_model_forward(config, tokenizer=None):
+    rope_cos, rope_sin = precompute_rope_embeddings(
+        config.max_seq_len, config.head_dim, config.rope_theta, "bfloat16", sharding=l2p(())
+    )
+    return partial(model_forward, config=config, rope_cos=rope_cos, rope_sin=rope_sin)
 
 
 def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):

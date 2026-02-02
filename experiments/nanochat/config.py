@@ -37,6 +37,8 @@ def get_config():
 
     cfg.max_steps = int(3.82e9 // 524288)
     cfg.generate_every = 500
+    cfg.val_every = 500
+    cfg.val_batches = 50
     cfg.eval_every = 1000
     cfg.eval_max_per_task = 500
     cfg.eval_batch_size = 128

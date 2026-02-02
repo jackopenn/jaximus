@@ -31,13 +31,19 @@ def get_hf_dataset(
     tokenizer_name=None,
     streaming=True,
     num_proc=None,
+    num_shards=None,
+    shard_index=None,
+    split="train",
+    data_files=None,
 ):
     if streaming:
         num_proc = None
 
-    hf_ds = load_dataset(*hf_name, split="train", streaming=streaming, num_proc=num_proc).shard(
-        num_shards=jax.process_count(), index=jax.process_index()
-    )
+    num_shards = num_shards if num_shards is not None else jax.process_count()
+    shard_index = shard_index if shard_index is not None else jax.process_index()
+    hf_ds = load_dataset(*hf_name, split=split, data_files=data_files, streaming=streaming, num_proc=num_proc)
+    if num_shards and num_shards > 1:
+        hf_ds = hf_ds.shard(num_shards=num_shards, index=shard_index)
 
     source = HFStreamingDataSource(hf_ds) if streaming else hf_ds
     ds = grain.MapDataset.source(source).to_iter_dataset(

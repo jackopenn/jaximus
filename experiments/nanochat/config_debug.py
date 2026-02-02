@@ -37,7 +37,9 @@ def get_config():
 
     cfg.max_steps = 5
     cfg.generate_every = 10
-    cfg.eval_every = 1
+    cfg.val_every = 2
+    cfg.val_batches = 2
+    cfg.eval_every = 0
     cfg.eval_max_per_task = 10
     cfg.eval_batch_size = 4
     cfg.eval_data_path = "cache"
