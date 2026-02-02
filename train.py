@@ -95,16 +95,17 @@ def train(cfg, model_module, optimizer_module):
     if do_val:
         val_hf_name = getattr(cfg.data, "val_hf_name", None) or cfg.data.hf_name
         val_batch_size = getattr(cfg, "val_batch_size", cfg.data.batch_size)
-        val_dataset = get_hf_dataset(
-            hf_name=val_hf_name,
-            sequence_length=cfg.data.max_length,
-            batch_size=val_batch_size,
-            tokenizer_name=cfg.data.tokenizer_name,
-            streaming=True,
-            split=val_split or "train",
-            data_files=val_data_files,
-        )
-        val_iter = iter(val_dataset)
+
+        def make_val_dataset():
+            return get_hf_dataset(
+                hf_name=val_hf_name,
+                sequence_length=cfg.data.max_length,
+                batch_size=val_batch_size,
+                tokenizer_name=cfg.data.tokenizer_name,
+                streaming=True,
+                split=val_split or "train",
+                data_files=val_data_files,
+            )
 
     # init sharding strategy, model and optimizer
     set_sharding_strategy(cfg.parallel.strategy)
@@ -236,6 +237,7 @@ def train(cfg, model_module, optimizer_module):
                     wandb_run.log({"eval/core_metric": eval_results["core_metric"]}, step=step)
 
             if do_val and step % cfg.val_every == 0:
+                val_iter = iter(make_val_dataset())
                 val_loss_sum = jnp.zeros(())
                 for _ in range(cfg.val_batches):
                     val_batch = jax.tree.map(
@@ -266,6 +268,7 @@ def train(cfg, model_module, optimizer_module):
 
     # val at end (ignore if we just did on last step)
     if do_val and cfg.max_steps % cfg.val_every != 0:
+        val_iter = iter(make_val_dataset())
         val_loss_sum = jnp.zeros(())
         for _ in range(cfg.val_batches):
             val_batch = jax.tree.map(
