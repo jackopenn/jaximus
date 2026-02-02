@@ -29,7 +29,7 @@ def get_config():
     cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "default"]
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
-    cfg.data.val_data_files = [f"shard_{i:05d}.parquet" for i in range(1822, 1826)]
+    cfg.data.val_data_files = [f"shard_{i:05d}.parquet" for i in range(1819, 1823)]
 
     tokens_per_batch = 524288
     cfg.data.batch_size = 64
