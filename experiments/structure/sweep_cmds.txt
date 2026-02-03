@@ -1,42 +1,35 @@
-# Scaling Laws Sweep: 24 runs
-# Batch sizes: d8/10=256, d12/14=128, d16/18/20=64
-
-# 1e18 sliding window = 256 (v2)
-num_layers=8 max_flops=1e18 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d8-w256-1e+18
-num_layers=10 max_flops=1e18 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d10-w256-1e+18
-num_layers=12 max_flops=1e18 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d12-w256-1e+18
-num_layers=14 max_flops=1e18 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d14-w256-1e+18
-num_layers=16 max_flops=1e18 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d16-w256-1e+18
-num_layers=18 max_flops=1e18 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d18-w256-1e+18
-
-# 3e18 full attention (v2)
+# Redo crashed 3e18 full runs
 num_layers=8 max_flops=3e18 batch_size=256 val_batch_size=256 exp_name=v2-d8-wfull-3e+18
 num_layers=10 max_flops=3e18 batch_size=256 val_batch_size=256 exp_name=v2-d10-wfull-3e+18
-num_layers=12 max_flops=3e18 batch_size=128 val_batch_size=256 exp_name=v2-d12-wfull-3e+18
-num_layers=14 max_flops=3e18 batch_size=128 val_batch_size=256 exp_name=v2-d14-wfull-3e+18
-num_layers=16 max_flops=3e18 batch_size=64 val_batch_size=256 exp_name=v2-d16-wfull-3e+18
-num_layers=18 max_flops=3e18 batch_size=64 val_batch_size=256 exp_name=v2-d18-wfull-3e+18
 
-# 3e18 sliding window = 256 (v2)
-num_layers=8 max_flops=3e18 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d8-w256-3e+18
-num_layers=10 max_flops=3e18 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d10-w256-3e+18
-num_layers=12 max_flops=3e18 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d12-w256-3e+18
-num_layers=14 max_flops=3e18 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d14-w256-3e+18
-num_layers=16 max_flops=3e18 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d16-w256-3e+18
-num_layers=18 max_flops=3e18 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d18-w256-3e+18
+# 5e17 full attention (v2)
+num_layers=8 max_flops=5e17 batch_size=256 val_batch_size=256 exp_name=v2-d8-wfull-5e+17
+num_layers=10 max_flops=5e17 batch_size=256 val_batch_size=256 exp_name=v2-d10-wfull-5e+17
+num_layers=12 max_flops=5e17 batch_size=128 val_batch_size=256 exp_name=v2-d12-wfull-5e+17
+num_layers=14 max_flops=5e17 batch_size=128 val_batch_size=256 exp_name=v2-d14-wfull-5e+17
+num_layers=16 max_flops=5e17 batch_size=64 val_batch_size=256 exp_name=v2-d16-wfull-5e+17
+num_layers=18 max_flops=5e17 batch_size=64 val_batch_size=256 exp_name=v2-d18-wfull-5e+17
 
-# 6e18 full attention (v2)
-num_layers=8 max_flops=6e18 batch_size=256 val_batch_size=256 exp_name=v2-d8-wfull-6e+18
-num_layers=10 max_flops=6e18 batch_size=256 val_batch_size=256 exp_name=v2-d10-wfull-6e+18
-num_layers=12 max_flops=6e18 batch_size=128 val_batch_size=256 exp_name=v2-d12-wfull-6e+18
-num_layers=14 max_flops=6e18 batch_size=128 val_batch_size=256 exp_name=v2-d14-wfull-6e+18
-num_layers=16 max_flops=6e18 batch_size=64 val_batch_size=256 exp_name=v2-d16-wfull-6e+18
-num_layers=18 max_flops=6e18 batch_size=64 val_batch_size=256 exp_name=v2-d18-wfull-6e+18
+# 5e17 sliding window = 256 (v2)
+num_layers=8 max_flops=5e17 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d8-w256-5e+17
+num_layers=10 max_flops=5e17 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d10-w256-5e+17
+num_layers=12 max_flops=5e17 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d12-w256-5e+17
+num_layers=14 max_flops=5e17 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d14-w256-5e+17
+num_layers=16 max_flops=5e17 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d16-w256-5e+17
+num_layers=18 max_flops=5e17 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d18-w256-5e+17
 
-# 6e18 sliding window = 256 (v2)
-num_layers=8 max_flops=6e18 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d8-w256-6e+18
-num_layers=10 max_flops=6e18 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d10-w256-6e+18
-num_layers=12 max_flops=6e18 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d12-w256-6e+18
-num_layers=14 max_flops=6e18 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d14-w256-6e+18
-num_layers=16 max_flops=6e18 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d16-w256-6e+18
-num_layers=18 max_flops=6e18 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d18-w256-6e+18
+# 2e18 full attention (v2)
+num_layers=8 max_flops=2e18 batch_size=256 val_batch_size=256 exp_name=v2-d8-wfull-2e+18
+num_layers=10 max_flops=2e18 batch_size=256 val_batch_size=256 exp_name=v2-d10-wfull-2e+18
+num_layers=12 max_flops=2e18 batch_size=128 val_batch_size=256 exp_name=v2-d12-wfull-2e+18
+num_layers=14 max_flops=2e18 batch_size=128 val_batch_size=256 exp_name=v2-d14-wfull-2e+18
+num_layers=16 max_flops=2e18 batch_size=64 val_batch_size=256 exp_name=v2-d16-wfull-2e+18
+num_layers=18 max_flops=2e18 batch_size=64 val_batch_size=256 exp_name=v2-d18-wfull-2e+18
+
+# 2e18 sliding window = 256 (v2)
+num_layers=8 max_flops=2e18 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d8-w256-2e+18
+num_layers=10 max_flops=2e18 sliding_window=256 batch_size=256 val_batch_size=256 exp_name=v2-d10-w256-2e+18
+num_layers=12 max_flops=2e18 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d12-w256-2e+18
+num_layers=14 max_flops=2e18 sliding_window=256 batch_size=128 val_batch_size=256 exp_name=v2-d14-w256-2e+18
+num_layers=16 max_flops=2e18 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d16-w256-2e+18
+num_layers=18 max_flops=2e18 sliding_window=256 batch_size=64 val_batch_size=256 exp_name=v2-d18-w256-2e+18
