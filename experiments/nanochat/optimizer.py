@@ -2,14 +2,7 @@ import jax
 import optax
 
 from muon import muon
-from scheduler import (
-    linear_decay_schedule,
-    linear_decay_schedule_py,
-    muon_momentum_schedule,
-    muon_momentum_schedule_py,
-    warmup_stable_decay_schedule,
-    warmup_stable_decay_schedule_py,
-)
+from scheduler import warmup_stable_decay_schedule, warmup_stable_decay_schedule_py
 
 
 def make_optimizer(cfg):
@@ -75,10 +68,8 @@ def make_optimizer(cfg):
                     learning_rate=make_schedule(matrix_lr),
                     nesterov=True,
                     layer_sharding=True,
-                    beta=muon_momentum_schedule(
-                        cfg.optimizer.momentum_start, cfg.optimizer.momentum_end, cfg.optimizer.momentum_warmup_steps
-                    ),
-                    weight_decay=linear_decay_schedule(weight_decay, cfg.max_steps),
+                    beta=cfg.optimizer.momentum,
+                    weight_decay=weight_decay,
                 ),
             },
             router,
@@ -95,10 +86,6 @@ def make_optimizer(cfg):
         "lr_unembed": make_lr_schedule_py(unembed_lr),
         "lr_scalar": make_lr_schedule_py(scalar_lr),
         "lr_matrix": make_lr_schedule_py(matrix_lr),
-        "momentum_matrix": muon_momentum_schedule_py(
-            cfg.optimizer.momentum_start, cfg.optimizer.momentum_end, cfg.optimizer.momentum_warmup_steps
-        ),
-        "weight_decay_matrix": linear_decay_schedule_py(weight_decay, cfg.max_steps),
     }
 
     return tx, schedule_fns

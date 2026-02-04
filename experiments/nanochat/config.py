@@ -47,9 +47,7 @@ def get_config():
     )
     cfg.optimizer.warmup_ratio = 0.0
     cfg.optimizer.warmdown_ratio = 0.5
-    cfg.optimizer.momentum_start = 0.85
-    cfg.optimizer.momentum_end = 0.95
-    cfg.optimizer.momentum_warmup_steps = 300
+    cfg.optimizer.momentum = 0.95
     # Base LRs (Complete(d)P scaling applied in optimizer)
     cfg.optimizer.embed.peak_lr = 0.3
     cfg.optimizer.unembed.peak_lr = 0.004
