@@ -62,7 +62,7 @@ def get_config():
     # Training (target 10.5x data:param ratio like nanochat)
     cfg.target_param_data_ratio = 10.5
     cfg.max_steps = lambda: int(
-        cfg.target_param_data_ratio * cfg.model.num_layers * cfg.model.hidden_dim // cfg.optimizer.total_batch_size * 6
+        (cfg.target_param_data_ratio * cfg.model.num_layers * cfg.model.hidden_dim * 6) // cfg.optimizer.total_batch_size
     )  # rough estimate
     cfg.generate_every = 500
     cfg.val_every = 250
