@@ -86,6 +86,8 @@ def make_optimizer(cfg):
         "lr_unembed": make_lr_schedule_py(unembed_lr),
         "lr_scalar": make_lr_schedule_py(scalar_lr),
         "lr_matrix": make_lr_schedule_py(matrix_lr),
+        "momentum_matrix": lambda _: cfg.optimizer.momentum,
+        "weight_decay_matrix": lambda _: weight_decay,
     }
 
     return tx, schedule_fns

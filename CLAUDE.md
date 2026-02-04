@@ -33,6 +33,9 @@
 - `uv run ruff format .` - format
 - Config in `pyproject.toml`
 
+### Git
+- Never commit or push without explicit permission
+
 ---
 ## Claude Suggestions
 *Claude can update this section whenever useful*
