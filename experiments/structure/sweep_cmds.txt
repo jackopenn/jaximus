@@ -1,8 +1,4 @@
 # 6e18 full attention (v2) - layers 12-20
-num_layers=12 max_flops=6e18 batch_size=128 val_batch_size=256 exp_name=v2-d12-wfull-6e+18
-num_layers=14 max_flops=6e18 batch_size=128 val_batch_size=256 exp_name=v2-d14-wfull-6e+18
-num_layers=16 max_flops=6e18 batch_size=64 val_batch_size=256 exp_name=v2-d16-wfull-6e+18
-num_layers=18 max_flops=6e18 batch_size=64 val_batch_size=256 exp_name=v2-d18-wfull-6e+18
 num_layers=20 max_flops=6e18 batch_size=64 val_batch_size=256 exp_name=v2-d20-wfull-6e+18
 
 # 6e18 sliding window = 256 (v2) - layers 12-20
