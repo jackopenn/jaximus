@@ -3,8 +3,6 @@ import optax
 
 from muon import muon
 from scheduler import (
-    linear_decay_schedule,
-    linear_decay_schedule_py,
     muon_momentum_schedule,
     muon_momentum_schedule_py,
     warmup_stable_decay_schedule,
@@ -78,7 +76,7 @@ def make_optimizer(cfg):
                     beta=muon_momentum_schedule(
                         cfg.optimizer.momentum_start, cfg.optimizer.momentum_end, cfg.optimizer.momentum_warmup_steps
                     ),
-                    weight_decay=linear_decay_schedule(weight_decay, cfg.max_steps),
+                    weight_decay=weight_decay,
                 ),
             },
             router,
@@ -98,7 +96,6 @@ def make_optimizer(cfg):
         "momentum_matrix": muon_momentum_schedule_py(
             cfg.optimizer.momentum_start, cfg.optimizer.momentum_end, cfg.optimizer.momentum_warmup_steps
         ),
-        "weight_decay_matrix": linear_decay_schedule_py(weight_decay, cfg.max_steps),
     }
 
     return tx, schedule_fns
