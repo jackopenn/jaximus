@@ -129,7 +129,7 @@ def init_model_weights(config, key):
                 ve_gate=w(next(keys), zeros, (32, K), (None, None)) if has_ve(i, L) else None,
             )
         )
-        value_embeds.append(w(next(keys), trunc(embed_std), (V, K * H), ("model_vocab", "model_kv")) if has_ve(i, L) else None)
+        value_embeds.append(w(next(keys), trunc(embed_std), (V, K * H), ("model_vocab", None)) if has_ve(i, L) else None)
 
     return ModelWeights(
         embed=w(next(keys), trunc(embed_std), (V, D), ("model_vocab", "model_embed")),
