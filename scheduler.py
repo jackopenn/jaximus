@@ -45,3 +45,21 @@ def muon_momentum_schedule_py(start, end, warmup_steps):
         return (1 - frac) * start + frac * end
 
     return schedule
+
+
+def linear_decay_schedule(peak_value, max_steps):
+    """Weight decay schedule: linear decay to 0."""
+
+    def schedule(step):
+        return peak_value * (1 - step / jnp.maximum(max_steps, 1))
+
+    return schedule
+
+
+def linear_decay_schedule_py(peak_value, max_steps):
+    """Pure Python weight decay schedule for logging."""
+
+    def schedule(step):
+        return peak_value * (1 - step / max(max_steps, 1))
+
+    return schedule
