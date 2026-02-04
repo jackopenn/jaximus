@@ -133,7 +133,7 @@ def train(cfg, model_module, optimizer_module):
     W = getattr(model_config, "sliding_window", None) or S
     num_flops_per_token = 6 * (num_params - num_embed_params) + L * 12 * N * H * min(W, S)
     if main_process:
-        print(f"{num_params=}\n{num_flops_per_token=}\n")
+        print(f"{num_params=}\n{num_flops_per_token=}\nmax_steps={cfg.max_steps}\n")
 
     # init wandb and logger
     cfg_dict = cfg.to_dict()
