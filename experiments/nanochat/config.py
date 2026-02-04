@@ -43,7 +43,7 @@ def get_config():
     # Optimizer (nanochat defaults, base LRs at base_width/base_depth)
     cfg.optimizer.total_batch_size = 524288
     cfg.optimizer.accum_steps = lambda: (
-        cfg.optimizer.total_batch_size // (cfg.data.batch_size * cfg.model.max_seq_len * cfg.parallel.data)
+        cfg.optimizer.total_batch_size // (cfg.data.batch_size * cfg.model.max_seq_len)
     )
     cfg.optimizer.warmup_ratio = 0.0
     cfg.optimizer.warmdown_ratio = 0.5
