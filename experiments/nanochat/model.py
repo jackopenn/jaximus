@@ -126,7 +126,7 @@ def init_model_weights(config, key):
                     up_proj=w(next(keys), trunc(hidden_std), (D, I), ("model_embed", "model_intermediate")),
                     down_proj=w(next(keys), zeros, (I, D), ("model_intermediate", "model_embed")),
                 ),
-                ve_gate=w(next(keys), zeros, (32, K), (None, "model_kv")) if has_ve(i, L) else None,
+                ve_gate=w(next(keys), zeros, (32, K), (None, None)) if has_ve(i, L) else None,
             )
         )
         value_embeds.append(w(next(keys), trunc(embed_std), (V, K * H), ("model_vocab", "model_kv")) if has_ve(i, L) else None)
