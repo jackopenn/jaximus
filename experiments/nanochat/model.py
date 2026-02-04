@@ -85,26 +85,27 @@ class ModelWeights:
     value_embeds: List[Optional[jax.Array]]  # (V, K*H) per layer with VE, None otherwise
 
 
-def init_model_weights(cfg, key):
+def init_model_weights(config, key):
     def w(key, init_fn, shape, sharding):
         return init_fn(key, shape, dtype=jnp.float32, out_sharding=l2p(sharding))
 
     V, D, N, K, H, I, L = (
-        cfg.model.vocab_size,
-        cfg.model.hidden_dim,
-        cfg.model.num_attention_heads,
-        cfg.model.num_key_value_heads,
-        cfg.model.head_dim,
-        cfg.model.intermediate_dim,
-        cfg.model.num_layers,
+        config.vocab_size,
+        config.hidden_dim,
+        config.num_attention_heads,
+        config.num_key_value_heads,
+        config.head_dim,
+        config.intermediate_dim,
+        config.num_layers,
     )
     keys = iter(jax.random.split(key, 4 + L * 7 + sum(1 for i in range(L) if has_ve(i, L))))
 
     # Complete(d)P init stds
-    m_N = D / cfg.completedp.base_width
-    embed_std = cfg.completedp.base_embed_std
-    hidden_std = cfg.completedp.base_std / (cfg.completedp.base_width**0.5) * (m_N**-0.5)
-    unembed_std = cfg.completedp.base_unembed_std * (m_N**-1)
+    m_N = D / config.completedp.base_width
+    embed_std = config.completedp.base_embed_std
+    hidden_std = config.completedp.base_std / (config.completedp.base_width**0.5) * (m_N**-0.5)
+    unembed_std = config.completedp.base_unembed_std * (m_N**-1)
+    print(f"Complete(d)P init: m_N={m_N:.4f}, embed_std={embed_std:.4f}, hidden_std={hidden_std:.6f}, unembed_std={unembed_std:.6f}")
 
     def trunc(std):
         return jax.nn.initializers.truncated_normal(stddev=std, lower=-2 * std, upper=2 * std)
@@ -140,17 +141,17 @@ def init_model_weights(cfg, key):
     )
 
 
-def make_model_forward(cfg, tokenizer=None):
+def make_model_forward(config, tokenizer=None):
     rope_cos, rope_sin = precompute_rope_embeddings(
-        cfg.model.max_seq_len, cfg.model.head_dim, cfg.model.rope_theta, "bfloat16", sharding=l2p(())
+        config.max_seq_len, config.head_dim, config.rope_theta, "bfloat16", sharding=l2p(())
     )
-    window_pattern = getattr(cfg.model, "window_pattern", "L")
-    window_sizes = compute_window_sizes(window_pattern, cfg.model.num_layers, cfg.model.max_seq_len)
-    m_L = cfg.model.num_layers / cfg.completedp.base_depth
-    resid_scale = m_L ** (-cfg.completedp.alpha)
+    window_pattern = getattr(config, "window_pattern", "L")
+    window_sizes = compute_window_sizes(window_pattern, config.num_layers, config.max_seq_len)
+    m_L = config.num_layers / config.completedp.base_depth
+    resid_scale = m_L ** (-config.completedp.alpha)
     return partial(
         model_forward,
-        config=cfg.model,
+        config=config,
         rope_cos=rope_cos,
         rope_sin=rope_sin,
         resid_scale=resid_scale,

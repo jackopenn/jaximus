@@ -27,12 +27,12 @@ def get_config():
     cfg.model.window_pattern = "SSSL"
 
     # Complete(d)P parameterization for HP transfer across width/depth/batch/tokens
-    cfg.completedp.base_width = 768
-    cfg.completedp.base_depth = 12
-    cfg.completedp.alpha = 0.5  # depth scaling exponent (0.5=feature diversity, 1.0=CompleteP)
-    cfg.completedp.base_std = 1.0  # base init std for matrix weights
-    cfg.completedp.base_embed_std = 1.0  # base init std for embedding
-    cfg.completedp.base_unembed_std = 0.001  # base init std for unembedding
+    cfg.model.completedp.base_width = 768
+    cfg.model.completedp.base_depth = 12
+    cfg.model.completedp.alpha = 0.5  # depth scaling exponent (0.5=feature diversity, 1.0=CompleteP)
+    cfg.model.completedp.base_std = 1.0  # base init std for matrix weights
+    cfg.model.completedp.base_embed_std = 1.0  # base init std for embedding
+    cfg.model.completedp.base_unembed_std = 0.001  # base init std for unembedding
 
     # Data
     cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-100BT"]
