@@ -35,10 +35,11 @@ def get_config():
     cfg.model.completedp.base_unembed_std = 0.001  # base init std for unembedding
 
     # Data
-    cfg.data.hf_name = ["HuggingFaceFW/fineweb-edu", "sample-100BT"]
+    cfg.data.hf_name = ["karpathy/fineweb-edu-100b-shuffle", "default"]
     cfg.data.tokenizer_name = "gpt2"
     cfg.data.max_length = lambda: cfg.model.max_seq_len
-    cfg.data.batch_size = 32  # device batch size
+    cfg.data.val_data_files = [f"shard_{i:05d}.parquet" for i in range(1819, 1823)]
+    cfg.data.batch_size = 32
 
     # Optimizer (nanochat defaults, base LRs at base_width/base_depth)
     cfg.optimizer.total_batch_size = 524288
