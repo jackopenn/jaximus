@@ -58,17 +58,17 @@ def get_config():
     cfg.optimizer.scalar.peak_lr = 0.5
     cfg.optimizer.adam_beta1 = 0.8
     cfg.optimizer.adam_beta2 = 0.95
-    cfg.optimizer.weight_decay = 0.0
+    cfg.optimizer.weight_decay = 0.2
 
     # Training (target 10.5x data:param ratio like nanochat)
     cfg.target_param_data_ratio = 10.5
     cfg.max_steps = lambda: int(
         cfg.target_param_data_ratio * (cfg.model.num_layers * cfg.model.hidden_dim ** 2 * 12 + cfg.model.vocab_size * cfg.model.hidden_dim) // cfg.optimizer.total_batch_size
     )  # params ≈ 12 * L * D² + V * D
-    cfg.generate_every = 500
-    cfg.val_every = 250
+    cfg.generate_every = 99999
+    cfg.val_every = 99999
     cfg.val_batches = 50
-    cfg.eval_every = 2000
+    cfg.eval_every = 99999
     cfg.eval_max_per_task = 500
     cfg.eval_batch_size = 128
     cfg.eval_data_path = "cache"
