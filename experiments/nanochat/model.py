@@ -108,7 +108,7 @@ def init_model_weights(config, key):
     print(f"Complete(d)P init: m_N={m_N:.4f}, embed_std={embed_std:.4f}, hidden_std={hidden_std:.6f}, unembed_std={unembed_std:.6f}")
 
     def trunc(std):
-        return jax.nn.initializers.truncated_normal(stddev=std, lower=-2 * std, upper=2 * std)
+        return jax.nn.initializers.truncated_normal(stddev=std)
 
     zeros = jax.nn.initializers.zeros
 

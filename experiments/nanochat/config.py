@@ -58,7 +58,7 @@ def get_config():
     cfg.optimizer.scalar.peak_lr = 0.5
     cfg.optimizer.adam_beta1 = 0.8
     cfg.optimizer.adam_beta2 = 0.95
-    cfg.optimizer.weight_decay = 0.2
+    cfg.optimizer.weight_decay = 0.0
 
     # Training (target 10.5x data:param ratio like nanochat)
     cfg.target_param_data_ratio = 10.5
