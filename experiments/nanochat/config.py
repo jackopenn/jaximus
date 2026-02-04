@@ -7,7 +7,7 @@ def get_config():
     cfg = Config()
     cfg.experiment = "experiments.nanochat"
     cfg.seed = 42
-    cfg.exp_name = "nanochat100-base"
+    cfg.exp_name = "nanochat-baseline"
 
     # Model architecture (nanochat defaults)
     cfg.model.vocab_size = 50304
@@ -47,7 +47,9 @@ def get_config():
     )
     cfg.optimizer.warmup_ratio = 0.0
     cfg.optimizer.warmdown_ratio = 0.5
-    cfg.optimizer.momentum = 0.95
+    cfg.optimizer.momentum_start = 0.85
+    cfg.optimizer.momentum_end = 0.95
+    cfg.optimizer.momentum_warmup_steps = 300
     # Base LRs (Complete(d)P scaling applied in optimizer)
     cfg.optimizer.embed.peak_lr = 0.3
     cfg.optimizer.unembed.peak_lr = 0.004
@@ -60,8 +62,8 @@ def get_config():
     # Training (target 10.5x data:param ratio like nanochat)
     cfg.target_param_data_ratio = 10.5
     cfg.max_steps = lambda: int(
-        cfg.target_param_data_ratio * cfg.model.num_layers * cfg.model.hidden_dim ** 2 * 12 // cfg.optimizer.total_batch_size
-    )  # rough estimate: params ≈ 12 * L * D²
+        cfg.target_param_data_ratio * (cfg.model.num_layers * cfg.model.hidden_dim ** 2 * 12 + cfg.model.vocab_size * cfg.model.hidden_dim) // cfg.optimizer.total_batch_size
+    )  # params ≈ 12 * L * D² + V * D
     cfg.generate_every = 500
     cfg.val_every = 250
     cfg.val_batches = 50
