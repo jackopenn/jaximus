@@ -19,11 +19,12 @@ def make_optimizer(cfg):
 
     embed_lr = cfg.optimizer.embed.peak_lr
     unembed_lr = cfg.optimizer.unembed.peak_lr / m_N
-    scalar_lr = cfg.optimizer.scalar.peak_lr * m_L ** (cfg.model.completedp.alpha - 1)
+    resid_lr = cfg.optimizer.scalar.peak_lr * 0.01
+    x0_lr = cfg.optimizer.scalar.peak_lr
     matrix_lr = cfg.optimizer.matrix.peak_lr
     weight_decay = cfg.optimizer.weight_decay * m_N
     print(f"Complete(d)P optimizer: m_N={m_N:.4f}, m_L={m_L:.4f}, alpha={cfg.model.completedp.alpha}")
-    print(f"  LRs: embed={embed_lr:.4f}, unembed={unembed_lr:.6f}, scalar={scalar_lr:.4f}, matrix={matrix_lr:.4f}")
+    print(f"  LRs: embed={embed_lr:.4f}, unembed={unembed_lr:.6f}, resid={resid_lr:.4f}, x0={x0_lr:.4f}, matrix={matrix_lr:.4f}")
     print(f"  weight_decay={weight_decay:.4f}")
 
     def make_schedule(peak_lr):
@@ -38,8 +39,10 @@ def make_optimizer(cfg):
                 return "embed"
             if name == "unembed":
                 return "unembed"
-            if name in ("resid_lambdas", "x0_lambdas"):
-                return "scalar"
+            if name == "resid_lambdas":
+                return "resid"
+            if name == "x0_lambdas":
+                return "x0"
             return "matrix"
 
         return jax.tree.map_with_path(route_path, state)
@@ -62,12 +65,19 @@ def make_optimizer(cfg):
                     b1=cfg.optimizer.adam_beta1,
                     b2=cfg.optimizer.adam_beta2,
                 ),
-                "scalar": optax.adamw(
-                    learning_rate=make_schedule(scalar_lr),
+                "resid": optax.adamw(
+                    learning_rate=make_schedule(resid_lr),
                     weight_decay=0.0,
-                    eps=1e-10 / m_N * m_L ** (-cfg.model.completedp.alpha),
+                    eps=1e-10,
                     b1=cfg.optimizer.adam_beta1,
                     b2=cfg.optimizer.adam_beta2,
+                ),
+                "x0": optax.adamw(
+                    learning_rate=make_schedule(x0_lr),
+                    weight_decay=0.0,
+                    eps=1e-10,
+                    b1=0.96,
+                    b2=0.95,
                 ),
                 "matrix": optax.inject_hyperparams(muon)(
                     learning_rate=make_schedule(matrix_lr),
@@ -91,7 +101,8 @@ def make_optimizer(cfg):
     schedule_fns = {
         "lr_embed": make_lr_schedule_py(embed_lr),
         "lr_unembed": make_lr_schedule_py(unembed_lr),
-        "lr_scalar": make_lr_schedule_py(scalar_lr),
+        "lr_resid": make_lr_schedule_py(resid_lr),
+        "lr_x0": make_lr_schedule_py(x0_lr),
         "lr_matrix": make_lr_schedule_py(matrix_lr),
         "momentum_matrix": muon_momentum_schedule_py(
             cfg.optimizer.momentum_start, cfg.optimizer.momentum_end, cfg.optimizer.momentum_warmup_steps
