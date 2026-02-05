@@ -2,6 +2,7 @@
 Functions for evaluating the CORE metric, as described in the DCLM paper.
 https://arxiv.org/abs/2406.11794
 """
+
 import csv
 import json
 import random
@@ -11,15 +12,14 @@ import zipfile
 from pathlib import Path
 
 import jax
-import numpy as np
-from tqdm import tqdm
 import jax.numpy as jnp
+import numpy as np
 import optax
 import yaml
-from jax.sharding import PartitionSpec as P, reshard
+from jax.sharding import PartitionSpec as P
+from jax.sharding import reshard
 from jinja2 import Template
-
-from modelling.layers.position import precompute_rope_embeddings
+from tqdm import tqdm
 
 EVAL_BUNDLE_URL = "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip"
 
@@ -75,28 +75,34 @@ def load_random_baselines(bundle_path):
     return baselines
 
 
-MC_TEMPLATE = Template("""
+MC_TEMPLATE = Template(
+    """
 {%- for example in fewshot_examples -%}
 {{ example.query }}{{ continuation_delimiter }}{{ example.choices[example.gold] }}
 
 {% endfor -%}
-{{ item.query }}{{ continuation_delimiter }}{{ choice }}""".strip())
+{{ item.query }}{{ continuation_delimiter }}{{ choice }}""".strip()
+)
 
 
-SCHEMA_TEMPLATE = Template("""
+SCHEMA_TEMPLATE = Template(
+    """
 {%- for example in fewshot_examples -%}
 {{ example.context_options[example.gold] }}{{ continuation_delimiter }}{{ example.continuation }}
 
 {% endfor -%}
-{{ context }}{{ continuation_delimiter }}{{ item.continuation }}""".strip())
+{{ context }}{{ continuation_delimiter }}{{ item.continuation }}""".strip()
+)
 
 
-LM_TEMPLATE = Template("""
+LM_TEMPLATE = Template(
+    """
 {%- for example in fewshot_examples -%}
 {{ example.context | trim }}{{ continuation_delimiter }}{{ example.continuation }}
 
 {% endfor -%}
-{{ item.context | trim }}{{ continuation_delimiter }}{% if include_continuation %}{{ item.continuation }}{% endif %}""".strip())
+{{ item.context | trim }}{{ continuation_delimiter }}{% if include_continuation %}{{ item.continuation }}{% endif %}""".strip()
+)
 
 
 def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
@@ -283,11 +289,19 @@ def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_si
             is_correct = np.all(pred_tokens == actual_tokens)
         else:
             choice_losses = []
+            skip_example = False
             for c in range(n_choices):
                 row = row_offset + c
                 si, ei = start_idxs[row], end_idxs[row]
-                mean_loss = losses_np[row, si - 1 : ei - 1].mean()
-                choice_losses.append(mean_loss)
+                # TODO: this happens when one choice is a prefix of another after tokenization.
+                # We should handle this properly, e.g. by scoring full sequences instead of just divergent tokens.
+                if si >= ei:
+                    skip_example = True
+                    break
+                choice_losses.append(losses_np[row, si - 1 : ei - 1].mean())
+            if skip_example:
+                row_offset += n_choices
+                continue
             pred_idx = choice_losses.index(min(choice_losses))
             is_correct = pred_idx == gold_labels[ex_idx]
 
@@ -297,17 +311,17 @@ def evaluate_batch(batch, eval_step_fn, pad_token_id, max_seq_len, eval_batch_si
     t4 = time.perf_counter() if timing else 0
 
     if timing:
-        print(f"stack: {t1-t0:.3f}s, forward: {t2-t1:.3f}s, transfer: {t3-t2:.3f}s, extract: {t4-t3:.3f}s")
+        print(f"stack: {t1 - t0:.3f}s, forward: {t2 - t1:.3f}s, transfer: {t3 - t2:.3f}s, extract: {t4 - t3:.3f}s")
 
     return results
 
 
-def make_eval_step(forward_fn, weights, config, rope_cos, rope_sin):
+def make_eval_step(forward_fn, weights):
     """Create a JIT-compiled eval step function with weights bound."""
     weights_sharding = jax.tree.map(lambda x: x.sharding, weights)
 
     def eval_step(input_ids, weights):
-        logits = forward_fn(input_ids, weights, config, rope_cos=rope_cos, rope_sin=rope_sin)
+        logits = forward_fn(input_ids, weights)
         target_ids = jnp.roll(input_ids, -1, axis=-1)
         losses = optax.softmax_cross_entropy_with_integer_labels(logits, target_ids)
         predictions = jnp.argmax(logits, axis=-1)
@@ -375,7 +389,7 @@ def evaluate_task(task_config, bundle_path, tokenizer, eval_step_fn, max_seq_len
             pending_indices = []
             pending_rows = 0
             if main_process:
-                iterator.set_postfix(acc=f"{sum(correct)/len(correct):.2%}")
+                iterator.set_postfix(acc=f"{sum(correct) / len(correct):.2%}")
 
         pending_indices.append(idx)
         pending_rows += num_choices
@@ -412,15 +426,8 @@ def evaluate_model(weights, config, forward_fn, tokenizer, eval_data_path, max_p
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    rope_cos, rope_sin = None, None
-    if hasattr(config, "rope_theta") and config.rope_theta is not None:
-        rope_cos, rope_sin = precompute_rope_embeddings(
-            max_seq_len, config.head_dim, config.rope_theta, getattr(config, "dtype", "bfloat16")
-        )
-        rope_cos, rope_sin = reshard(rope_cos, P()), reshard(rope_sin, P())
-
     # Create JIT-compiled eval step
-    eval_step_fn = make_eval_step(forward_fn, weights, config, rope_cos, rope_sin)
+    eval_step_fn = make_eval_step(forward_fn, weights)
 
     task_configs = load_core_config(bundle_path)
     random_baselines = load_random_baselines(bundle_path)

@@ -13,38 +13,34 @@ if os.environ.get("JAX_MULTIHOST", "0") == "1":
 
 import optax
 import orbax.checkpoint as ocp
+import wandb
 from jax import numpy as jnp
-from jax.sharding import AxisType, reshard
-from jax.sharding import PartitionSpec as P
+from jax.sharding import AxisType
 from sws import run
 from transformers import AutoTokenizer
 
-import wandb
 from data.hf import get_hf_dataset
 from eval import evaluate_model
 from generate import generate
-from modelling.layers.position import precompute_rope_embeddings
 from parallel import l2p, set_sharding_strategy
 from utils import DummyWandb, MetricLogger, pretty_print_model, pretty_print_samples
 
 
-def make_train_step(optimizer, model_config, model_weights, opt_weights, forward_fn):
-    model_weights_sharding = jax.tree.map(lambda x: x.sharding, model_weights)
-    opt_weights_sharding = jax.tree.map(lambda x: x.sharding, opt_weights)
-    input_sharding = l2p(("batch", "seq"))
-
-    rope_cos, rope_sin = None, None
-    if hasattr(model_config, "rope_theta") and model_config.rope_theta is not None:
-        rope_cos, rope_sin = precompute_rope_embeddings(
-            model_config.max_seq_len, model_config.head_dim, model_config.rope_theta, "bfloat16"
-        )
-        rope_cos, rope_sin = reshard(rope_cos, P()), reshard(rope_sin, P())
-
+def make_loss_fn(forward_fn):
     def loss_fn(model_weights, x, y):
-        logits = forward_fn(x, model_weights, model_config, rope_cos=rope_cos, rope_sin=rope_sin)
+        logits = forward_fn(x, model_weights)
         return jnp.mean(
             jax.nn.logsumexp(logits, axis=-1, keepdims=True) - jnp.take_along_axis(logits, y[..., jnp.newaxis], axis=-1)
         )
+
+    return loss_fn
+
+
+def make_train_step(optimizer, model_weights, opt_weights, forward_fn):
+    model_weights_sharding = jax.tree.map(lambda x: x.sharding, model_weights)
+    opt_weights_sharding = jax.tree.map(lambda x: x.sharding, opt_weights)
+    input_sharding = l2p(("batch", "seq"))
+    loss_fn = make_loss_fn(forward_fn)
 
     @jax.jit(
         in_shardings=(model_weights_sharding, opt_weights_sharding, (input_sharding, input_sharding)),
@@ -59,14 +55,26 @@ def make_train_step(optimizer, model_config, model_weights, opt_weights, forward
     return train_step, input_sharding
 
 
-def train(cfg, init_model_weights, model_forward, make_optimizer):
-    # init mesh 
+def make_val_step(model_weights, forward_fn):
+    model_weights_sharding = jax.tree.map(lambda x: x.sharding, model_weights)
+    input_sharding = l2p(("batch", "seq"))
+    loss_fn = make_loss_fn(forward_fn)
+
+    @jax.jit(in_shardings=(model_weights_sharding, (input_sharding, input_sharding)), out_shardings=None)
+    def val_step(model_weights, batch):
+        x, y = batch
+        return loss_fn(model_weights, x, y)
+
+    return val_step, input_sharding
+
+
+def train(cfg, model_module, optimizer_module):
+    # init mesh
     mesh = jax.make_mesh((cfg.parallel.data,), ("data",), (AxisType.Explicit,))
     jax.set_mesh(mesh)
     main_process = jax.process_index() == 0
     if main_process:
         print(f"{mesh=}\n")
-
 
     # init tokenizer and dataset
     tokenizer = AutoTokenizer.from_pretrained(cfg.data.tokenizer_name)
@@ -76,20 +84,41 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
         batch_size=cfg.data.batch_size,
         tokenizer_name=cfg.data.tokenizer_name,
         streaming=True,
-        num_proc=None,
+        num_shards=jax.process_count(),
+        shard_index=jax.process_index(),
     )
 
-    
+    # Validation dataset (completely separate)
+    val_split = getattr(cfg.data, "val_split", None)
+    val_data_files = getattr(cfg.data, "val_data_files", None)
+    do_val = cfg.val_every > 0 and (val_split or val_data_files)
+    if do_val:
+        val_hf_name = getattr(cfg.data, "val_hf_name", None) or cfg.data.hf_name
+        val_batch_size = getattr(cfg, "val_batch_size", cfg.data.batch_size)
+
+        def make_val_dataset():
+            return get_hf_dataset(
+                hf_name=val_hf_name,
+                sequence_length=cfg.data.max_length,
+                batch_size=val_batch_size,
+                tokenizer_name=cfg.data.tokenizer_name,
+                streaming=True,
+                split=val_split or "train",
+                data_files=val_data_files,
+            )
+
     # init sharding strategy, model and optimizer
     set_sharding_strategy(cfg.parallel.strategy)
     model_config = cfg.model
-    model_weights = init_model_weights(model_config, jax.random.PRNGKey(cfg.seed))
-    tx, optimizer_config, schedule_fns = make_optimizer(cfg)
+
+    # create model forward (after mesh is set for rope sharding)
+    model_forward = model_module.make_model_forward(model_config, tokenizer)
+    model_weights = model_module.init_model_weights(model_config, jax.random.PRNGKey(cfg.seed))
+    tx, schedule_fns = optimizer_module.make_optimizer(cfg)
     opt_weights = tx.init(model_weights)
     accum_steps = cfg.optimizer.accum_steps
     if main_process:
         pretty_print_model(model_weights)
-
 
     # calculate num_flops_per_token for mfu
     num_params = sum(x.size for x in jax.tree_util.tree_leaves(model_weights))
@@ -101,17 +130,18 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
         model_config.head_dim,
         model_config.max_seq_len,
     )
-    num_flops_per_token = 6 * (num_params - num_embed_params) + L * 12 * N * H * S
+    W = getattr(model_config, "sliding_window", None) or S
+    num_flops_per_token = 6 * (num_params - num_embed_params) + L * 12 * N * H * min(W, S)
     if main_process:
-        print(f"{num_params=}\n{num_flops_per_token=}\n")
+        print(f"{num_params=}\n{num_flops_per_token=}\nmax_steps={cfg.max_steps}\n")
 
-
-    # init wandb and logger 
+    # init wandb and logger
     cfg_dict = cfg.to_dict()
-    cfg_dict["optimizers_resolved"] = optimizer_config
+    cfg_dict["num_params"] = num_params
+    cfg_dict["num_flops_per_token"] = num_flops_per_token
     if main_process:
         project_name = cfg.wandb_project if cfg.wandb_project else "transformers"
-        wandb_run = wandb.init(project=project_name, config=cfg_dict) if cfg.wandb else DummyWandb()
+        wandb_run = wandb.init(project=project_name, name=cfg.exp_name, config=cfg_dict) if cfg.wandb else DummyWandb()
         train_logger = MetricLogger(
             cfg.data.batch_size,
             accum_steps,
@@ -121,17 +151,16 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             cfg.max_steps,
             wandb_run,
         )
-    
 
     # init checkpoint manager
-    checkpoint_dir = cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
+    checkpoint_dir = (
+        cfg.checkpoint_dir if cfg.checkpoint_dir.startswith("gs://") else os.path.join(os.getcwd(), cfg.checkpoint_dir)
+    )
     if main_process:
         os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_manager = ocp.CheckpointManager(
-        checkpoint_dir,
-        options=ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
+        checkpoint_dir, options=ocp.CheckpointManagerOptions(max_to_keep=1, cleanup_tmp_directories=True)
     )
-    
 
     # init profiler
     if main_process:
@@ -144,10 +173,10 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
             profiler_options.gpu_enable_cupti_activity_graph_trace = True
             profiler_options.gpu_dump_graph_node_mapping = True
 
-
-
     # make jit train step
-    train_step, input_sharding = make_train_step(tx, model_config, model_weights, opt_weights, model_forward)
+    train_step, input_sharding = make_train_step(tx, model_weights, opt_weights, model_forward)
+    if do_val:
+        val_step, val_input_sharding = make_val_step(model_weights, model_forward)
 
     train_iter = iter(dataset)
     step, micro_step, t0 = 1, 0, time.time()
@@ -177,7 +206,7 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
                     }
                 )
 
-            if step % cfg.generate_every == 0:
+            if cfg.generate_every > 0 and step % cfg.generate_every == 0:
                 samples = generate(model_weights, model_config, tokenizer, model_forward)
                 if main_process:
                     pretty_print_samples(samples)
@@ -192,14 +221,38 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
 
             if cfg.eval_every > 0 and step % cfg.eval_every == 0:
                 eval_results = evaluate_model(
-                    model_weights, model_config, model_forward, tokenizer, cfg.eval_data_path, cfg.eval_max_per_task, cfg.eval_batch_size
+                    model_weights,
+                    model_config,
+                    model_forward,
+                    tokenizer,
+                    cfg.eval_data_path,
+                    cfg.eval_max_per_task,
+                    cfg.eval_batch_size,
                 )
                 if main_process:
                     wandb_run.log({f"eval/{k}": v for k, v in eval_results["results"].items()}, step=step)
-                    wandb_run.log({f"eval/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=step)
+                    wandb_run.log(
+                        {f"eval/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=step
+                    )
                     wandb_run.log({"eval/core_metric": eval_results["core_metric"]}, step=step)
 
+            if do_val and step % cfg.val_every == 0:
+                val_iter = iter(make_val_dataset())
+                val_loss_sum = jnp.zeros(())
+                for _ in range(cfg.val_batches):
+                    val_batch = jax.tree.map(
+                        lambda x: jax.make_array_from_process_local_data(val_input_sharding, x), next(val_iter)
+                    )
+                    val_loss_sum += val_step(model_weights, val_batch)
+                val_loss = float(val_loss_sum) / cfg.val_batches
+                if main_process:
+                    print(f"val_loss: {val_loss:.4f}")
+                    wandb_run.log({"val/loss": val_loss}, step=step)
+
             step += 1
+
+    # Sync before final operations
+    jax.experimental.multihost_utils.sync_global_devices("loop_complete")
 
     # checkpoint at max steps (ignore if we just did on last step)
     if cfg.checkpoint_every > 0 and cfg.max_steps % cfg.checkpoint_every != 0:
@@ -213,6 +266,20 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
                 aliases=[f"step_{cfg.max_steps}"],
             )
 
+    # val at end (ignore if we just did on last step)
+    if do_val and cfg.max_steps % cfg.val_every != 0:
+        val_iter = iter(make_val_dataset())
+        val_loss_sum = jnp.zeros(())
+        for _ in range(cfg.val_batches):
+            val_batch = jax.tree.map(
+                lambda x: jax.make_array_from_process_local_data(val_input_sharding, x), next(val_iter)
+            )
+            val_loss_sum += val_step(model_weights, val_batch)
+        val_loss = float(val_loss_sum) / cfg.val_batches
+        if main_process:
+            print(f"val_loss: {val_loss:.4f}")
+            wandb_run.log({"val/loss": val_loss}, step=cfg.max_steps)
+
     # full eval at end (max_per_task=-1)
     if cfg.eval_every > 0:
         eval_results = evaluate_model(
@@ -220,20 +287,26 @@ def train(cfg, init_model_weights, model_forward, make_optimizer):
         )
         if main_process:
             wandb_run.log({f"eval_final/{k}": v for k, v in eval_results["results"].items()}, step=cfg.max_steps)
-            wandb_run.log({f"eval_final/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=cfg.max_steps)
+            wandb_run.log(
+                {f"eval_final/centered_{k}": v for k, v in eval_results["centered_results"].items()}, step=cfg.max_steps
+            )
             wandb_run.log({"eval_final/core_metric": eval_results["core_metric"]}, step=cfg.max_steps)
 
     if main_process:
         train_logger.flush()
         wandb_run.finish()
 
+    # Sync all workers before exit to prevent coordination service errors
+    jax.experimental.multihost_utils.sync_global_devices("train_complete")
+
 
 def main(cfg):
     model_module = importlib.import_module(f"{cfg.experiment}.model")
     optimizer_module = importlib.import_module(f"{cfg.experiment}.optimizer")
-    train(cfg, model_module.init_model_weights, model_module.model_forward, optimizer_module.make_optimizer)
+    train(cfg, model_module, optimizer_module)
 
     import sys
+
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)

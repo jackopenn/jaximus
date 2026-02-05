@@ -3,6 +3,7 @@ import optax
 
 from muon import muon
 from scheduler import (
+    linear_decay_schedule,
     muon_momentum_schedule,
     muon_momentum_schedule_py,
     warmup_stable_decay_schedule,
@@ -11,18 +12,39 @@ from scheduler import (
 
 
 def make_optimizer(cfg):
-    """Create partitioned optimizer. Returns (optimizer, config_for_logging, schedule_fns_for_logging)."""
-    opt = cfg.optimizer
+    """Create partitioned optimizer with Complete(d)P scaling. Returns (optimizer, schedule_fns_for_logging)."""
+    m_N = cfg.model.hidden_dim / cfg.model.completedp.base_width
+    m_L = cfg.model.num_layers / cfg.model.completedp.base_depth
+    warmup_steps = int(cfg.optimizer.warmup_ratio * cfg.max_steps)
+    decay_steps = int(cfg.optimizer.warmdown_ratio * cfg.max_steps)
+
+    embed_lr = cfg.optimizer.embed.peak_lr
+    unembed_lr = cfg.optimizer.unembed.peak_lr / m_N
+    resid_lr = cfg.optimizer.scalar.peak_lr * 0.01
+    x0_lr = cfg.optimizer.scalar.peak_lr
+    matrix_lr = cfg.optimizer.matrix.peak_lr
+    weight_decay = cfg.optimizer.weight_decay * m_N
+    print(f"Complete(d)P optimizer: m_N={m_N:.4f}, m_L={m_L:.4f}, alpha={cfg.model.completedp.alpha}")
+    print(f"  LRs: embed={embed_lr:.4f}, unembed={unembed_lr:.6f}, resid={resid_lr:.4f}, x0={x0_lr:.4f}, matrix={matrix_lr:.4f}")
+    print(f"  weight_decay={weight_decay:.4f}")
 
     def make_schedule(peak_lr):
-        return warmup_stable_decay_schedule(peak_lr, opt.warmup_steps, opt.decay_steps, cfg.max_steps)
+        return warmup_stable_decay_schedule(peak_lr, warmup_steps, decay_steps, cfg.max_steps)
 
     def router(state):
         def route_path(path, _):
             if len(path) == 0:
-                return "other"
+                return "matrix"
             name = path[0].name
-            return "embed" if name in ("embed", "pos_embed") else "unembed" if name == "unembed" else "other"
+            if name in ("embed", "value_embeds"):
+                return "embed"
+            if name == "unembed":
+                return "unembed"
+            if name == "resid_lambdas":
+                return "resid"
+            if name == "x0_lambdas":
+                return "x0"
+            return "matrix"
 
         return jax.tree.map_with_path(route_path, state)
 
@@ -31,56 +53,61 @@ def make_optimizer(cfg):
         optax.partition(
             {
                 "embed": optax.adamw(
-                    learning_rate=make_schedule(opt.embed.peak_lr), weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95
+                    learning_rate=make_schedule(embed_lr),
+                    weight_decay=0.0,
+                    eps=1e-10 / m_N,
+                    b1=cfg.optimizer.adam_beta1,
+                    b2=cfg.optimizer.adam_beta2,
                 ),
                 "unembed": optax.adamw(
-                    learning_rate=make_schedule(opt.unembed.peak_lr), weight_decay=0.0, eps=1e-10, b1=0.8, b2=0.95
+                    learning_rate=make_schedule(unembed_lr),
+                    weight_decay=0.0,
+                    eps=1e-10 / m_N,
+                    b1=cfg.optimizer.adam_beta1,
+                    b2=cfg.optimizer.adam_beta2,
                 ),
-                "other": optax.inject_hyperparams(muon)(
-                    learning_rate=make_schedule(opt.other.peak_lr),
+                "resid": optax.adamw(
+                    learning_rate=make_schedule(resid_lr),
+                    weight_decay=0.0,
+                    eps=1e-10,
+                    b1=cfg.optimizer.adam_beta1,
+                    b2=cfg.optimizer.adam_beta2,
+                ),
+                "x0": optax.adamw(
+                    learning_rate=make_schedule(x0_lr),
+                    weight_decay=0.0,
+                    eps=1e-10,
+                    b1=0.96,
+                    b2=0.95,
+                ),
+                "matrix": optax.inject_hyperparams(muon)(
+                    learning_rate=make_schedule(matrix_lr),
                     nesterov=True,
                     layer_sharding=True,
-                    beta=muon_momentum_schedule(opt.momentum_start, opt.momentum_end, opt.momentum_warmup_steps),
+                    beta=muon_momentum_schedule(
+                        cfg.optimizer.momentum_start, cfg.optimizer.momentum_end, cfg.optimizer.momentum_warmup_steps
+                    ),
+                    weight_decay=linear_decay_schedule(weight_decay, cfg.max_steps),
                 ),
             },
             router,
         ),
     )
-    if opt.accum_steps > 1:
-        tx = optax.MultiSteps(tx, every_k_schedule=opt.accum_steps)
-
-    resolved_config = {
-        "embed": {
-            "type": "adamw",
-            "peak_lr": opt.embed.peak_lr,
-            "warmup_steps": opt.warmup_steps,
-            "decay_steps": opt.decay_steps,
-        },
-        "unembed": {
-            "type": "adamw",
-            "peak_lr": opt.unembed.peak_lr,
-            "warmup_steps": opt.warmup_steps,
-            "decay_steps": opt.decay_steps,
-        },
-        "other": {
-            "type": "muon",
-            "peak_lr": opt.other.peak_lr,
-            "warmup_steps": opt.warmup_steps,
-            "decay_steps": opt.decay_steps,
-            "momentum_start": opt.momentum_start,
-            "momentum_end": opt.momentum_end,
-            "momentum_warmup_steps": opt.momentum_warmup_steps,
-        },
-    }
+    if cfg.optimizer.accum_steps > 1:
+        tx = optax.MultiSteps(tx, every_k_schedule=cfg.optimizer.accum_steps)
 
     def make_lr_schedule_py(peak_lr):
-        return warmup_stable_decay_schedule_py(peak_lr, opt.warmup_steps, opt.decay_steps, cfg.max_steps)
+        return warmup_stable_decay_schedule_py(peak_lr, warmup_steps, decay_steps, cfg.max_steps)
 
     schedule_fns = {
-        "lr_embed": make_lr_schedule_py(opt.embed.peak_lr),
-        "lr_unembed": make_lr_schedule_py(opt.unembed.peak_lr),
-        "lr_other": make_lr_schedule_py(opt.other.peak_lr),
-        "momentum_other": muon_momentum_schedule_py(opt.momentum_start, opt.momentum_end, opt.momentum_warmup_steps),
+        "lr_embed": make_lr_schedule_py(embed_lr),
+        "lr_unembed": make_lr_schedule_py(unembed_lr),
+        "lr_resid": make_lr_schedule_py(resid_lr),
+        "lr_x0": make_lr_schedule_py(x0_lr),
+        "lr_matrix": make_lr_schedule_py(matrix_lr),
+        "momentum_matrix": muon_momentum_schedule_py(
+            cfg.optimizer.momentum_start, cfg.optimizer.momentum_end, cfg.optimizer.momentum_warmup_steps
+        ),
     }
 
-    return tx, resolved_config, schedule_fns
+    return tx, schedule_fns

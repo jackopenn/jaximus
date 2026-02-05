@@ -4,21 +4,18 @@ from functools import partial
 import jax
 import numpy as np
 from jax import numpy as jnp
-from jax.sharding import PartitionSpec as P
-from jax.sharding import reshard
 
-from modelling.layers.position import precompute_rope_embeddings
 from parallel import l2p
 
 
-def _make_sample_batch(model_config, rope_cos, rope_sin, forward_fn):
+def _make_sample_batch(forward_fn):
     @partial(jax.jit, static_argnums=(2, 3, 4, 5))
     def _sample_batch(weights, tokens, prompt_len, gen_len, top_k, temperature, key):
         def body_fn(i, carry):
             tokens, pos, key = carry
             key, subkey = jax.random.split(key)
 
-            logits = forward_fn(tokens, weights, model_config, rope_cos=rope_cos, rope_sin=rope_sin)
+            logits = forward_fn(tokens, weights)
             logits = logits[:, pos, :].astype(jnp.float32) / temperature
 
             # Top-k filtering
@@ -101,17 +98,7 @@ def generate(
     tokens = jax.make_array_from_process_local_data(l2p(("batch", "seq")), local_tokens)
     indices = jax.make_array_from_process_local_data(l2p(("batch",)), local_indices)
 
-    rope_cos, rope_sin = None, None
-    if getattr(model_config, "position_embedding_type", None) == "rope" or hasattr(model_config, "rope_theta"):
-        rope_cos, rope_sin = precompute_rope_embeddings(
-            model_config.max_seq_len,
-            model_config.head_dim,
-            model_config.rope_theta,
-            getattr(model_config, "dtype", "bfloat16"),
-        )
-        rope_cos, rope_sin = reshard(rope_cos, P()), reshard(rope_sin, P())
-
-    sample_fn = _make_sample_batch(model_config, rope_cos, rope_sin, forward_fn)
+    sample_fn = _make_sample_batch(forward_fn)
     generated = sample_fn(weights, tokens, max_prompt_len, gen_len, top_k, temperature, jax.random.PRNGKey(seed))
 
     all_generated = jax.experimental.multihost_utils.process_allgather(generated, tiled=True)

@@ -21,12 +21,8 @@ def make_optimizer(cfg):
         def route_path(path, _):
             if len(path) == 0:
                 return "other"
-            names = [getattr(k, "name", getattr(k, "key", None)) for k in path]
-            if "embed" in names or "pos_embed" in names:
-                return "embed"
-            if "unembed" in names or "canon" in names:
-                return "unembed"
-            return "other"
+            name = path[0].name
+            return "embed" if name in ("embed", "pos_embed") else "unembed" if name == "unembed" else "other"
 
         return jax.tree.map_with_path(route_path, state)
 

@@ -46,7 +46,9 @@ def canon_layer(x, kernel):
     depth = kernel.shape[0]
     kernel = kernel.astype(dtype).T[:, None, :]  # (depth, dim) -> (dim, 1, depth)
     x_t = x.transpose(0, 2, 1)
-    conv_out = jax.lax.conv_general_dilated(x_t, kernel, window_strides=(1,), padding=((depth - 1, 0),), feature_group_count=dim)
+    conv_out = jax.lax.conv_general_dilated(
+        x_t, kernel, window_strides=(1,), padding=((depth - 1, 0),), feature_group_count=dim
+    )
     return x + conv_out.transpose(0, 2, 1)
 
 
@@ -55,7 +57,13 @@ def _init_weight(key, init_fn, shape, sharding):
 
 
 def _init_canon_block_weights(config, key):
-    D, N, K, H, I = config.hidden_dim, config.num_attention_heads, config.num_key_value_heads, config.head_dim, config.intermediate_dim
+    D, N, K, H, I = (
+        config.hidden_dim,
+        config.num_attention_heads,
+        config.num_key_value_heads,
+        config.head_dim,
+        config.intermediate_dim,
+    )
     depth, init = config.canon_depth, config.canon_init
     if init == "zeros":
         init_fn = lambda dim: jax.nn.initializers.zeros
@@ -90,7 +98,9 @@ def _init_mlp_weights(config, keys):
     D, I = config.hidden_dim, config.intermediate_dim
     bound = (3**0.5) * (D**-0.5)
     return MLPWeights(
-        up_proj=_init_weight(next(keys), jax.nn.initializers.uniform(scale=bound), (D, I), ("model_embed", "model_intermediate")),
+        up_proj=_init_weight(
+            next(keys), jax.nn.initializers.uniform(scale=bound), (D, I), ("model_embed", "model_intermediate")
+        ),
         down_proj=_init_weight(next(keys), jax.nn.initializers.zeros, (I, D), ("model_intermediate", "model_embed")),
     )
 
@@ -99,7 +109,9 @@ def _init_layer_weights(config, keys, canon_key):
     return LayerWeights(
         attention_weights=_init_attention_weights(config, keys),
         mlp_weights=_init_mlp_weights(config, keys),
-        canon=_init_canon_block_weights(config, canon_key) if (config.canon_a or config.canon_b or config.canon_c or config.canon_d) else None,
+        canon=_init_canon_block_weights(config, canon_key)
+        if (config.canon_a or config.canon_b or config.canon_c or config.canon_d)
+        else None,
     )
 
 
@@ -122,7 +134,9 @@ def init_model_weights(config, key):
     )
 
 
-def _attention_with_canon_b(x, weights, canon, rope_cos, rope_sin, qk_norm_epsilon, num_heads, num_kv_heads, mask, dtype):
+def _attention_with_canon_b(
+    x, weights, canon, rope_cos, rope_sin, qk_norm_epsilon, num_heads, num_kv_heads, mask, dtype
+):
     """Attention with Canon-B applied after Q/K/V projections, before reshape."""
     batch, seq_len, _ = x.shape
     head_dim = weights.q_proj.shape[1] // num_heads
@@ -154,8 +168,12 @@ def _attention_with_canon_b(x, weights, canon, rope_cos, rope_sin, qk_norm_epsil
         mask = make_attention_mask(mask)
 
     att = jax.nn.dot_product_attention(
-        query=q, key=k, value=v, is_causal=True,
-        implementation="cudnn" if jax.default_backend() == "gpu" else "xla", mask=mask,
+        query=q,
+        key=k,
+        value=v,
+        is_causal=True,
+        implementation="cudnn" if jax.default_backend() == "gpu" else "xla",
+        mask=mask,
     )
 
     att = att.reshape(batch, seq_len, num_heads * head_dim, out_sharding=l2p(("batch", "seq", "act_q", "act_head")))
@@ -187,9 +205,16 @@ def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):
         if canon is not None and canon.canon_a is not None:
             x = canon_layer(x, canon.canon_a)
         x = _attention_with_canon_b(
-            x, layer_weights.attention_weights, canon,
-            rope_cos=rope_cos, rope_sin=rope_sin, qk_norm_epsilon=eps,
-            num_heads=config.num_attention_heads, num_kv_heads=config.num_key_value_heads, mask=mask, dtype=dtype,
+            x,
+            layer_weights.attention_weights,
+            canon,
+            rope_cos=rope_cos,
+            rope_sin=rope_sin,
+            qk_norm_epsilon=eps,
+            num_heads=config.num_attention_heads,
+            num_kv_heads=config.num_key_value_heads,
+            mask=mask,
+            dtype=dtype,
         )
         x = x + residual
 

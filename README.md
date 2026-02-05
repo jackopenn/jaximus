@@ -64,8 +64,19 @@ def init_model_weights(config, key):
     """Initialize model weights. Returns a pytree of arrays."""
     ...
 
-def model_forward(x, weights, config, rope_cos=None, rope_sin=None, mask=None):
-    """Forward pass. Returns logits."""
+def make_model_forward(config):
+    """Factory that returns a forward function with precomputed values.
+
+    Returns a partial function: forward(x, weights, mask=None) -> logits
+
+    The factory precomputes rope embeddings and binds config via functools.partial.
+    Called after mesh is set to enable proper sharding of precomputed values.
+    """
+    rope_cos, rope_sin = precompute_rope_embeddings(...)
+    return partial(_model_forward, config=config, rope_cos=rope_cos, rope_sin=rope_sin)
+
+def _model_forward(x, weights, config, rope_cos, rope_sin, mask=None):
+    """Internal forward pass. Returns logits."""
     ...
 ```
 

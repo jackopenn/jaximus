@@ -7,17 +7,34 @@
 - Jaximus is a jax codebase for experimenting with different LLM architectures and training methods
 - The main approach is to create an experiment in `experiments/`. Which contains at minimum 3 files:
     - `config.py`: contains the config of the exp.
-    - `model.py`: contains the model definition and forward pass. Implements at minimum `init_model_weights()` and `model_forward()` functions.
+    - `model.py`: contains the model definition and forward pass. Implements `init_model_weights()` and `make_model_forward()`.
     - `optimizer.py`: contains `make_optimizer()` function that returns an optax optimizer.
+
+### Model Forward Pattern
+- `make_model_forward(config)` - factory that returns a partial function `forward(x, weights, mask=None) -> logits`
+- The factory precomputes rope embeddings and other config-derived values, binding them via `functools.partial`
 - The rest of the code not in `experiments/` contains general training logic that should work with any implementation of the functions above (checkpointing, logging, sampling etc.)
 
 ### Style
 - Don't use large comments. Max 1 line per function definition.
 - Only comment if understanding the code is not trivial.
 - Do not create variables if only used once, prefer inlining.
+- Do not create helper functions if code is only used once, prefer inlining.
 - Keep style consistent with the file.
 - 120 character line limit
 - Readability over speed
+- Single-letter vars for dimensions: `D` (hidden), `N` (heads), `K` (kv_heads), `H` (head_dim), `L` (layers), `S` (seq_len), `V` (vocab), `I` (intermediate)
+- Type annotations: moderate use, required for dataclass fields
+- Import order: stdlib, third-party, local (enforced by ruff)
+- JAX patterns: `@jax.tree_util.register_dataclass`, `l2p()`, `jax.named_scope`
+
+### Linting
+- `uv run ruff check .` - lint
+- `uv run ruff format .` - format
+- Config in `pyproject.toml`
+
+### Git
+- Never commit or push without explicit permission
 
 ---
 ## Claude Suggestions

@@ -21,7 +21,7 @@ def get_config():
 
     # canon
     cfg.model.canon_a = False
-    cfg.model.canon_b = False 
+    cfg.model.canon_b = False
     cfg.model.canon_c = False
     cfg.model.canon_d = False
     cfg.model.canon_depth = 4
