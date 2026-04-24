@@ -20,17 +20,19 @@ def _newton_schulz_iteration(x, coeffs):
     return coeffs[0] * x + b @ x
 
 
-def orthogonalize(x, ns_coeffs, ns_steps=5, eps=1e-8):
+def orthogonalize(x, ns_coeffs, ns_steps=5, eps=1e-8, ns_coeffs_final=None, ns_steps_final=0):
     transposed = x.shape[-2] > x.shape[-1]
     if transposed:
         x = x.swapaxes(-2, -1)
     x = x / (jnp.linalg.norm(x, axis=(-2, -1), keepdims=True) + eps)
     ns_coeffs = ns_coeffs.astype(x.dtype)
     x = jax.lax.fori_loop(0, ns_steps, lambda _, x: _newton_schulz_iteration(x, ns_coeffs), x, unroll=True)
+    ns_coeffs_final = ns_coeffs if ns_coeffs_final is None else jnp.asarray(ns_coeffs_final).astype(x.dtype)
+    x = jax.lax.fori_loop(0, ns_steps_final, lambda _, x: _newton_schulz_iteration(x, ns_coeffs_final), x, unroll=True)
     return x.swapaxes(-2, -1) if transposed else x
 
 
-def layer_shard_orthogonalize(stacked, ns_coeffs, ns_steps, eps):
+def layer_shard_orthogonalize(stacked, ns_coeffs, ns_steps, eps, ns_coeffs_final, ns_steps_final):
     # stacked: (L, P, Q) either P or Q is sharded
     # find sharded axis
     # if no sharded axis, orthogonalize locally
@@ -44,7 +46,7 @@ def layer_shard_orthogonalize(stacked, ns_coeffs, ns_steps, eps):
     mesh, spec = sharding.mesh, sharding.spec
     sharded_axis = next((i + 1 for i, s in enumerate(spec[1:]) if s is not None), None)
     if sharded_axis is None:
-        return orthogonalize(stacked, ns_coeffs, ns_steps, eps)
+        return orthogonalize(stacked, ns_coeffs, ns_steps, eps, ns_coeffs_final, ns_steps_final)
 
     axis_name, axis_size = spec[sharded_axis], mesh.shape[spec[sharded_axis]]
     num_layers = stacked.shape[0]
@@ -55,21 +57,28 @@ def layer_shard_orthogonalize(stacked, ns_coeffs, ns_steps, eps):
     spec_list = list(spec)
     spec_list[0] = None
 
-    @jax.shard_map(in_specs=(P(*spec_list), P(), P(), P()), out_specs=P(*spec_list))
-    def orthgonalise_group(x, ns_coeffs, ns_steps, eps):
+    @jax.shard_map(in_specs=(P(*spec_list), P(), P(), P(), P(), P()), out_specs=P(*spec_list))
+    def orthgonalise_group(x, ns_coeffs, ns_steps, eps, ns_coeffs_final, ns_steps_final):
         # all to all (sharded on layer axis)
         x = jax.lax.all_to_all(x, axis_name, split_axis=0, concat_axis=sharded_axis, tiled=True)
         # orthogonalize (local)
-        x = orthogonalize(x, ns_coeffs, ns_steps, eps)
+        x = orthogonalize(x, ns_coeffs, ns_steps, eps, ns_coeffs_final, ns_steps_final)
         # all to all (sharded on original axis)
         x = jax.lax.all_to_all(x, axis_name, split_axis=sharded_axis, concat_axis=0, tiled=True)
         return x
 
-    result = orthgonalise_group(stacked, jnp.asarray(ns_coeffs), jnp.asarray(ns_steps), jnp.asarray(eps))
+    result = orthgonalise_group(
+        stacked,
+        jnp.asarray(ns_coeffs),
+        jnp.asarray(ns_steps),
+        jnp.asarray(eps),
+        jnp.asarray(ns_coeffs_final),
+        jnp.asarray(ns_steps_final),
+    )
     return result[:num_layers] if pad_size > 0 else result
 
 
-def orthogonalize_layer_sharded(params, ns_coeffs, ns_steps, eps):
+def orthogonalize_layer_sharded(params, ns_coeffs, ns_steps, eps, ns_coeffs_final, ns_steps_final):
     leaves, treedef = jax.tree_util.tree_flatten(params)
     # group parameters by shape and sharding
     groups = {}
@@ -83,7 +92,7 @@ def orthogonalize_layer_sharded(params, ns_coeffs, ns_steps, eps):
     for _, items in groups.items():
         positions, arrays = zip(*items)
         stacked = jnp.stack(arrays, axis=0)
-        orthogonalized = layer_shard_orthogonalize(stacked, ns_coeffs, ns_steps, eps)
+        orthogonalized = layer_shard_orthogonalize(stacked, ns_coeffs, ns_steps, eps, ns_coeffs_final, ns_steps_final)
         for i, pos in enumerate(positions):
             results[pos] = orthogonalized[i]
     return treedef.unflatten(results)
@@ -92,6 +101,8 @@ def orthogonalize_layer_sharded(params, ns_coeffs, ns_steps, eps):
 def scale_by_muon(
     ns_coeffs=(3.4445, -4.7750, 2.0315),
     ns_steps=5,
+    ns_coeffs_final=None,
+    ns_steps_final=0,
     beta=0.95,
     eps=1e-8,
     nesterov=True,
@@ -115,25 +126,28 @@ def scale_by_muon(
         else:
             mu_hat = jax.tree.map(lambda m: m / bias_correction, mu)
         # orthogonalize
+        final_coeffs = ns_coeffs if ns_coeffs_final is None else ns_coeffs_final
         if layer_sharding:
-            orthogonalized = orthogonalize_layer_sharded(mu_hat, state.ns_coeffs, ns_steps, eps)
+            orthogonalized = orthogonalize_layer_sharded(
+                mu_hat, state.ns_coeffs, ns_steps, eps, final_coeffs, ns_steps_final
+            )
         else:
             # use auto_axes since X @ X.T is ambiguous
             # but XLA does this inefficiently with multiple all gathers for each matrix and iteration
             # hence layer sharding approach above
             orthogonalized = jax.tree.map(
                 lambda x: jax.sharding.auto_axes(orthogonalize)(
-                    x, state.ns_coeffs, ns_steps, eps, out_sharding=jax.typeof(x).sharding
+                    x, state.ns_coeffs, ns_steps, eps, final_coeffs, ns_steps_final, out_sharding=jax.typeof(x).sharding
                 ),
                 mu_hat,
             )
         # apply shape factor
         if adjust_lr_fn == "original":
-            updates = jax.tree.map(lambda x: x * math.sqrt(max(1, x.shape[1] / x.shape[0])), orthogonalized)
+            updates = jax.tree.map(lambda x: x * math.sqrt(max(1, x.shape[-1] / x.shape[-2])), orthogonalized)
         elif adjust_lr_fn == "match_rms_adamw":
             # https://arxiv.org/pdf/2502.16982v1
             # transfer adamw tuned lr
-            updates = jax.tree.map(lambda x: x * 0.2 * math.sqrt(max(x.shape[0], x.shape[1])), orthogonalized)
+            updates = jax.tree.map(lambda x: x * 0.2 * math.sqrt(max(x.shape[-2], x.shape[-1])), orthogonalized)
         return updates, MuonState(count=count_inc, mu=mu, ns_coeffs=state.ns_coeffs)
 
     return base.GradientTransformation(init_fn, update_fn)
@@ -143,6 +157,8 @@ def muon(
     learning_rate,
     ns_coeffs=(3.4445, -4.7750, 2.0315),
     ns_steps=5,
+    ns_coeffs_final=None,
+    ns_steps_final=0,
     beta=0.95,
     eps=1e-8,
     weight_decay=0.0,
@@ -155,6 +171,8 @@ def muon(
         scale_by_muon(
             ns_coeffs=ns_coeffs,
             ns_steps=ns_steps,
+            ns_coeffs_final=ns_coeffs_final,
+            ns_steps_final=ns_steps_final,
             beta=beta,
             eps=eps,
             nesterov=nesterov,
